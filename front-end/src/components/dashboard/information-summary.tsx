@@ -1,70 +1,200 @@
 'use client';
 
-import { useState, useTransition } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { TextSearch, Loader2 } from 'lucide-react';
-import { getSummary } from '@/app/actions';
-import { useToast } from "@/hooks/use-toast";
+import { Badge } from '@/components/ui/badge';
+import { Workflow, ChevronLeft, ChevronRight } from 'lucide-react';
+import { useTranscription } from '@/context/transcription-context';
+import { useAgentInsights } from '@/context/agent-insights-context';
+import type { ToolResult } from '@/types/agent';
 
-type InfoSummaryProps = {
-  transcript: string;
-};
+function formatTimestamp(value: string | undefined) {
+    if (!value) return null;
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+        return null;
+    }
+    return new Intl.DateTimeFormat(undefined, {
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+    }).format(date);
+}
 
-export default function InformationSummary({ transcript }: InfoSummaryProps) {
-  const { toast } = useToast();
-  const [summary, setSummary] = useState<string | null>(null);
-  const [isPending, startTransition] = useTransition();
+function renderMetadataValue(value: unknown): string {
+    if (value == null) {
+        return '—';
+    }
+    if (typeof value === 'string') {
+        return value;
+    }
+    if (typeof value === 'number' || typeof value === 'boolean') {
+        return String(value);
+    }
+    if (Array.isArray(value)) {
+        return value.map(item => renderMetadataValue(item)).join(', ');
+    }
+    try {
+        return JSON.stringify(value);
+    } catch {
+        return String(value);
+    }
+}
 
-  const handleSummarize = () => {
-    const formData = new FormData();
-    formData.append('transcript', transcript);
+export default function InformationSummary() {
+    const { isLoading, error, refresh, isActive, hasAttempted } = useTranscription();
+    const { toolResults } = useAgentInsights();
+    const [activeIndex, setActiveIndex] = useState(0);
+    const previousCountRef = useRef(0);
 
-    startTransition(async () => {
-      const result = await getSummary(formData);
-      if (result.error) {
-          toast({
-              variant: "destructive",
-              title: "Error",
-              description: result.error,
-          });
-      } else {
-          setSummary(result.summary);
-      }
-    });
-  };
+    useEffect(() => {
+        const nextCount = toolResults.length;
 
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <TextSearch className="text-accent" />
-          Quick Information
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        {summary ? (
-          <div className="p-4 bg-secondary rounded-md text-sm text-secondary-foreground space-y-2 max-h-60 overflow-y-auto">
-              <h3 className="font-semibold">Call Summary:</h3>
-              <p className="whitespace-pre-wrap">{summary}</p>
-          </div>
-        ) : (
-          <p className="text-sm text-muted-foreground">
-            Click the button to generate a summary of the conversation.
-          </p>
-        )}
+        if (nextCount === 0) {
+            previousCountRef.current = 0;
+            setActiveIndex(0);
+            return;
+        }
 
-        <Button onClick={handleSummarize} disabled={isPending || !transcript} className="w-full">
-          {isPending ? (
-            <>
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              Generating...
-            </>
-          ) : (
-            'Generate Summary'
-          )}
-        </Button>
-      </CardContent>
-    </Card>
-  );
+        if (nextCount !== previousCountRef.current) {
+            previousCountRef.current = nextCount;
+            setActiveIndex(nextCount - 1);
+        } else if (activeIndex > nextCount - 1) {
+            setActiveIndex(nextCount - 1);
+        }
+    }, [toolResults, activeIndex]);
+
+    const activeResult: ToolResult | null = useMemo(() => {
+        return toolResults[activeIndex] ?? null;
+    }, [toolResults, activeIndex]);
+
+    const metadataEntries = useMemo(() => {
+        if (!activeResult?.metadata || typeof activeResult.metadata !== 'object') {
+            return [] as Array<[string, unknown]>;
+        }
+        return Object.entries(activeResult.metadata);
+    }, [activeResult]);
+
+    const hasResults = toolResults.length > 0;
+
+    const showIdleState = !hasAttempted && !hasResults;
+    const showAwaitingState = hasAttempted && isActive && !hasResults && !error;
+
+    const handlePrev = () => {
+        setActiveIndex(index => Math.max(0, index - 1));
+    };
+
+    const handleNext = () => {
+        setActiveIndex(index => Math.min(toolResults.length - 1, index + 1));
+    };
+
+    return (
+        <Card>
+            <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                    <Workflow className="text-accent" />
+                    Agent Tool Insights
+                </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+                {error && (
+                    <div className="text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded-md p-3">
+                        Failed to load transcription stream.
+                        {' '}
+                        <button className="underline" onClick={() => refresh()}>
+                            Retry
+                        </button>
+                    </div>
+                )}
+
+                {showIdleState && (
+                    <p className="text-sm text-muted-foreground">
+                        Start a call to collect live insights. Any agent tool results will appear here as they are produced.
+                    </p>
+                )}
+
+                {showAwaitingState && (
+                    <p className="text-sm text-muted-foreground">
+                        The agent is working. Tool results will appear here once the first tool completes.
+                    </p>
+                )}
+
+                {!isLoading && !error && !showIdleState && !hasResults && !showAwaitingState && (
+                    <p className="text-sm text-muted-foreground">
+                        No tool results are available yet for this session.
+                    </p>
+                )}
+
+                {hasResults && activeResult && (
+                    <div className="space-y-4">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div className="flex items-center gap-2">
+                                {activeResult.toolName && (
+                                    <Badge variant="outline" className="bg-secondary/50">
+                                        {activeResult.toolName}
+                                    </Badge>
+                                )}
+                                {activeResult.title && (
+                                    <span className="text-sm font-medium text-foreground/80">
+                                        {activeResult.title}
+                                    </span>
+                                )}
+                            </div>
+                            <span className="text-xs uppercase tracking-wide text-muted-foreground">
+                                {activeIndex + 1} / {toolResults.length}
+                            </span>
+                        </div>
+
+                        <div className="space-y-3 rounded-2xl border border-border/60 bg-secondary/40 p-4">
+                            {formatTimestamp(activeResult.receivedAt) && (
+                                <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                                    Received at {formatTimestamp(activeResult.receivedAt)}
+                                </span>
+                            )}
+                            <p className="whitespace-pre-wrap text-sm leading-relaxed text-secondary-foreground">
+                                {activeResult.content}
+                            </p>
+                            {metadataEntries.length > 0 && (
+                                <div className="rounded-xl border border-border/40 bg-background/80 p-3">
+                                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Details</p>
+                                    <dl className="mt-2 space-y-1 text-xs text-foreground/80">
+                                        {metadataEntries.map(([key, value]) => (
+                                            <div key={key} className="flex items-start justify-between gap-2">
+                                                <dt className="font-medium capitalize text-foreground/70">{key.replace(/_/g, ' ')}</dt>
+                                                <dd className="text-right text-foreground/80">
+                                                    {renderMetadataValue(value)}
+                                                </dd>
+                                            </div>
+                                        ))}
+                                    </dl>
+                                </div>
+                            )}
+                        </div>
+
+                        <div className="flex items-center justify-between gap-3">
+                            <Button
+                                variant="outline"
+                                onClick={handlePrev}
+                                disabled={activeIndex === 0}
+                                className="flex-1"
+                            >
+                                <ChevronLeft className="mr-2 h-4 w-4" />
+                                Previous
+                            </Button>
+                            <Button
+                                variant="outline"
+                                onClick={handleNext}
+                                disabled={activeIndex >= toolResults.length - 1}
+                                className="flex-1"
+                            >
+                                Next
+                                <ChevronRight className="ml-2 h-4 w-4" />
+                            </Button>
+                        </div>
+                    </div>
+                )}
+            </CardContent>
+        </Card>
+    );
 }
