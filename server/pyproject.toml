@@ -5,6 +5,12 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn>=0.30.0",
+    "sqlalchemy>=2.0.0",
+    "pydantic>=2.8.0",
+    "pydantic-settings>=2.3.0",
+    "python-multipart>=0.0.9",
     "flask>=3.1.2",
     "python-dotenv>=1.1.1",
     "twilio>=9.8.1",
