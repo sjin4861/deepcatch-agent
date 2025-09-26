@@ -3,13 +3,12 @@ from dotenv import load_dotenv
 import os
 load_dotenv()
 
-
 # Twilio 인증 정보 (환경변수에 저장하는 걸 권장)
 ACCOUNT_SID = os.getenv("ACCOUNT_SID")
 AUTH_TOKEN = os.getenv("AUTH_TOKEN")
 US_PHONENUMBER = os.getenv("US_PHONENUMBER")
-KO_PHONENUMBER = "YOUR_PHONENUMBER"  # 한국 번호 예시
-URL = "YOUR_NGROK_URL/voice"  # Flask 서버가 외부에서 접근 가능한 URL
+KO_PHONENUMBER = os.getenv("KO_PHONENUMBER")  # 한국 번호 예시
+URL = os.getenv("URL")  # Flask 서버가 외부에서 접근 가능한 URL
 client = Client(ACCOUNT_SID, AUTH_TOKEN)
 
 call = client.calls.create(
