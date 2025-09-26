@@ -1,8 +1,9 @@
 # twilio_voice_handler.py
 
-from fastapi import FastAPI, Request, Form, HTTPException, Response
+from fastapi import FastAPI, Request, Form, HTTPException, Response, WebSocket
 from twilio.twiml.voice_response import VoiceResponse
 from twilio.rest import Client
+from src.media_bridge import twilio_media_stream_handler
 from pydantic import BaseModel, Field
 from typing import Optional, Dict, List
 import os
@@ -140,9 +141,11 @@ async def initiate_fishing_call(call_request: CallRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"전화 연결 실패: {str(e)}")
 
+app.add_api_websocket_route("/voice/stream", twilio_media_stream_handler)
+
 @app.post("/voice/start")
 async def handle_voice_start(request: Request):
-    """통화 시작 시 TwiML 응답"""
+    """통화 시작 시 TwiML 응답 (실시간 스트리밍)"""
     form = await request.form()
     call_sid = form.get('CallSid')
     
@@ -152,35 +155,18 @@ async def handle_voice_start(request: Request):
         response.hangup()
         return Response(content=str(response), media_type="application/xml")
     
-    state = conversation_states[call_sid]
     response = VoiceResponse()
     
-    # 첫 번째 메시지 + 응답 대기
-    gather = response.gather(
-        input='speech',
-        action=f'/voice/process?call_sid={call_sid}',
-        method='POST',
-        timeout=15,
-        speech_timeout='auto',
-        language='ko-KR',
-        enhanced=True,
-        profanity_filter=False
-    )
+    # WebSocket URL 생성
+    clean_url = URL.replace("https://", "").replace("http://", "")
+    websocket_url = f"wss://{clean_url}/voice/stream"
     
-    greeting_msg = fishing_handler.generate_greeting_message(
-        state.fishing_request, 
-        state.business_name
-    )
+    # 실시간 미디어 스트림 시작
+    connect = response.connect()
+    connect.stream(url=websocket_url)
     
-    gather.say(greeting_msg, voice='Polly.Seoyeon', language='ko-KR')
-    
-    # 타임아웃 시 메시지
-    response.say(
-        "응답을 듣지 못했습니다. 나중에 다시 연락드리겠습니다.",
-        voice='Polly.Seoyeon', 
-        language='ko-KR'
-    )
-    response.hangup()
+    # AI가 응답을 준비하고 말하는 동안 통화가 끊기지 않도록 충분한 시간 동안 pause
+    response.pause(length=180) 
 
     return Response(content=str(response), media_type="application/xml")
 
@@ -331,10 +317,14 @@ async def get_call_result(call_sid: str):
         "final_step": state.step
     }
 
+from src.realtime_server import socket_app
+
 @app.get("/")
 async def root():
     """API 루트"""
     return {"message": "낚시 예약 AI 에이전트 API", "docs": "/docs"}
+
+app.mount("/", socket_app)
 
 if __name__ == "__main__":
     import uvicorn
