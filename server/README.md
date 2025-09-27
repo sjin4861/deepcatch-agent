@@ -53,6 +53,12 @@ uvicorn src.main:app --reload --port 8000
 - GET /api/v1/catch/history?fish_type=고등어 - 특정 품목 과거 어획 데이터 조회 (INT-S3-007)
 - GET /api/v1/harbor/ships/status?harbor_name=구룡포항 - 실시간 선박 입항 및 하역 구역 정보 (INT-S3-001)
 
+### 날씨 예보 API
+- GET /api/v1/weather/forecast?reg=11B20304&tmfc=0 - 기상청 단기예보 조회 (전체 파라미터 지원)
+- GET /api/v1/weather/forecast?help=1 - API 사용법 확인
+- GET /api/v1/weather/forecast?reg=12A10000&tmfc1=2025092718&tmfc2=2025092800 - 해상예보 예시
+- GET /api/v1/weather/regions?search=포항&reg_sp=H - 예보구역 검색 및 조회
+
 ### 디버깅 API
 - GET /api/v1/debug/env-info - 환경변수 및 설정 정보 확인
 - GET /api/v1/debug/test-api-key - API 키 유효성 테스트
@@ -75,6 +81,11 @@ US_PHONENUMBER=+1...
 # DPG API 설정
 DPG_SERVICE_KEY=yqfuaX1YKzxki2YCEvIgG...  # 실제 서비스 키로 교체 필요
 FISHERY_API_DEV_MODE=true                   # true: mock 데이터 사용, false: 실제 API 호출
+
+# 기상청 API 설정
+WEATHER_AUTH_KEY=...                        # 기상청 Open API 인증키
+WEATHER_URL=https://apihub.kma.go.kr/api/typ01/url/fct_shrt_reg.php  # 기상청 단기예보 API URL
+WEATHER_CODE_URL=...                        # 기상청 예보구역 조회 API URL (authKey 포함 가능)
 
 # SSL 설정
 USE_SSL=true                                # true: HTTPS, false: HTTP
