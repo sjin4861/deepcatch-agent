@@ -240,3 +240,4 @@ async def send_text(sid: str, data: dict):
     except Exception as e:
         logger.error(f"Error sending text: {e}")
         await sio.emit('call_error', {'error': str(e)}, room=sid)
+

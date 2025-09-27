@@ -10,51 +10,46 @@ import {
     useRef,
     useState,
 } from 'react';
-import { useCallSocket, type TranscriptSegment } from '@/lib/socket-client';
+import { useSocketIO } from '@/lib/socket-io-client';
 
-export type { TranscriptSegment } from '@/lib/socket-client';
-
+export type TranscriptSegment = { speaker: string; text: string; timestamp?: string };
 export type TranscriptionContextValue = {
-    segments: TranscriptSegment[];
-    transcript: string;
-    isLoading: boolean;
-    error: string | null;
-    refresh: () => Promise<void>;
-    start: () => Promise<void>;
-    stop: () => void;
-    isActive: boolean;
-    isConnected: boolean;
-    hasAttempted: boolean;
+  segments: TranscriptSegment[];
+  transcript: string;
+  isLoading: boolean;
+  error: string | null;
+  refresh: () => Promise<void>;
+  start: () => Promise<void>;
+  stop: () => void;
+  isActive: boolean;
+  isConnected: boolean;
+  hasAttempted: boolean; // 유지 (호환성)
 };
 
 const TranscriptionContext = createContext<TranscriptionContextValue | null>(null);
 
-type ProviderProps = {
-    children: ReactNode;
-};
-
 export function TranscriptionProvider({
     children,
-}: ProviderProps) {
+}: {
+    children: ReactNode;
+}) {
     const [isActive, setIsActive] = useState(false);
     const [hasCompleted, setHasCompleted] = useState(false);
+    const [hasAttempted, setHasAttempted] = useState(false);
     const isMountedRef = useRef(true);
 
-    const {
-        connected,
-        hasAttempted,
-        segments,
-        isCalling,
-        error,
-        startCall,
-        stopCall,
-        reset,
-    } = useCallSocket();
+    const { connected, segments: rawSegments, error, isCalling, startCall, stopCall } = useSocketIO();
+
+    // rawSegments (assistant/user) → 기존 형태(speaker) 매핑
+    const segments = useMemo<TranscriptSegment[]>(() => {
+        return rawSegments.map((s) => ({ speaker: s.role, text: s.text }));
+    }, [rawSegments]);
 
     const start = useCallback(async () => {
         if (!isMountedRef.current) return;
         setHasCompleted(false);
         setIsActive(true);
+        setHasAttempted(true);
         startCall();
     }, [startCall]);
 
@@ -63,16 +58,14 @@ export function TranscriptionProvider({
         setIsActive(false);
         setHasCompleted(true);
         stopCall();
-        reset();
-    }, [reset, stopCall]);
+    }, [stopCall]);
 
     const refresh = useCallback(async () => {
         if (!isMountedRef.current) return;
-        reset();
         setHasCompleted(false);
         setIsActive(true);
         startCall();
-    }, [reset, startCall]);
+    }, [startCall]);
 
     useEffect(() => {
         if (!isCalling && isActive && segments.length > 0) {
@@ -88,43 +81,19 @@ export function TranscriptionProvider({
         }
     }, [error]);
 
-    useEffect(() => {
-        return () => {
-            isMountedRef.current = false;
-            reset();
-        };
-    }, [reset]);
+    useEffect(() => () => { isMountedRef.current = false; }, []);
 
     const value = useMemo<TranscriptionContextValue>(() => {
-        const transcript = segments
-            .map(segment => `${segment.speaker}: ${segment.text}`)
-            .join('\n');
+        const transcript = segments.map(seg => `${seg.speaker}: ${seg.text}`).join('\n');
         const isLoading = isActive && segments.length === 0 && !hasCompleted && !error;
-        return {
-            segments,
-            transcript,
-            isLoading,
-            error,
-            refresh,
-            start,
-            stop,
-            isActive,
-            isConnected: connected,
-            hasAttempted,
-        };
+        return { segments, transcript, isLoading, error, refresh, start, stop, isActive, isConnected: connected, hasAttempted };
     }, [segments, isActive, hasCompleted, error, refresh, start, stop, connected, hasAttempted]);
 
-    return (
-        <TranscriptionContext.Provider value={value}>
-            {children}
-        </TranscriptionContext.Provider>
-    );
+    return <TranscriptionContext.Provider value={value}>{children}</TranscriptionContext.Provider>;
 }
 
 export function useTranscription() {
-    const context = useContext(TranscriptionContext);
-    if (!context) {
-        throw new Error('useTranscription must be used within a TranscriptionProvider');
-    }
-    return context;
+    const ctx = useContext(TranscriptionContext);
+    if (!ctx) throw new Error('useTranscription must be used within a TranscriptionProvider');
+    return ctx;
 }

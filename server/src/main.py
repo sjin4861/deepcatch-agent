@@ -21,7 +21,11 @@ from . import models, crud
 from .agent import ChatRequest, ChatResponse, PlanAgent
 from .agent.services import AgentServices
 from .agent import call_runtime
-from .agent.call_test_flow import run_call_flow
+# NOTE: run_call_flow / call_runtime 기능을 main 내부로 통합하기 위한 준비.
+# 기존 별도 유틸 (.agent.call_test_flow, .agent.call_runtime) 사용을 단계적으로 축소.
+# 아래 TODO 섹션 참조.
+from .agent.conversation_models import FishingPlanDetails
+from .agent.scenario_loader import load_scenario_steps, ScenarioState
 
 # 데이터베이스 테이블 생성
 models.Base.metadata.create_all(bind=engine)
@@ -48,6 +52,7 @@ def clear_persistent_data() -> None:
 
 import openai
 from src.realtime_server import sio
+from src.fishery_api import router as fishery_router
 
 load_dotenv()
 US_PHONENUMBER = os.getenv("US_PHONENUMBER")
@@ -63,6 +68,11 @@ app = FastAPI(
 @app.on_event("startup")
 def on_startup() -> None:
     clear_persistent_data()
+    # 비즈니스 데이터 시드 (이미 존재하면 skip)
+    try:
+        seed_businesses_if_needed()
+    except Exception:
+        logger.exception("비즈니스 시드 중 오류 발생")
 
 app.add_middleware(
     CORSMiddleware,
@@ -78,6 +88,7 @@ openai_client = openai.OpenAI(api_key=settings.openai_api_key)
 
 conversation_history: Dict[str, List[Dict[str, str]]] = {}
 assistant_stream_buffers: Dict[str, str] = {}
+_scenario_sessions: Dict[str, ScenarioState] = {}  # call_sid -> ScenarioState
 
 ############################
 # 기존 함수 in_scenario 재정의 완료
@@ -135,16 +146,106 @@ class CallTestResponse(BaseModel):
 
 @app.post("/call", response_model=CallTestResponse)
 async def call_invoke(req: CallTestRequest, db: Session = Depends(get_db)):
-        """시나리오 기반 또는 실전화 콜 실행 (단독 CallExecutionAgent).
+    """플래너 결과를 기반으로 비즈니스(낚시점)에 즉시 전화를 발신하거나 시뮬레이션.
 
-        Body:
-            - shop_name: 특정 상점 우선 선택 (부분 매칭 허용)
-            - simulate: True 면 Twilio 실제 발신 대신 시뮬레이션 (그래프/시나리오/추출은 동일 수행)
-        반환: state / slots / transcript 일부 (front-end 가 확장 필요 시 수정 가능)
-        """
-        logger.info("/call 시작 shop=%s simulate=%s", req.shop_name, req.simulate)
-        out = run_call_flow(db, shop_name=req.shop_name, simulate=req.simulate)
-        return CallTestResponse(result=out)
+    - Planner 필수 키가 비어있으면 400 반환
+    - simulate=True: Twilio 미호출, 가짜 SID 생성 후 즉시 completed 상태로 반환
+    - simulate=False: Twilio outbound (start_reservation_call 경유) 수행
+    - WebSocket 이벤트: call_started, call_failed
+    """
+    services = AgentServices(db)
+    snapshot = services.load_plan()
+    plan_details = snapshot.details
+    missing = plan_details.missing_keys()
+    if missing:
+        return CallTestResponse(result={
+            'state': 'failed',
+            'error': f'플랜 필수 정보 부족: {", ".join(missing)}',
+            'missing': missing,
+            'simulated': req.simulate,
+        })
+
+    # 비즈니스 선택
+    selection = services.pick_business(details=plan_details, preferred_name=req.shop_name)
+    business = selection.business
+    if not business:
+        await sio.emit('call_failed', {'reason': 'no_business', 'shop_name': req.shop_name})
+        return CallTestResponse(result={
+            'state': 'failed',
+            'error': '연결 가능한 비즈니스가 없습니다.',
+            'simulated': req.simulate,
+        })
+
+    # 시뮬레이션 분기
+    if req.simulate:
+        call_sid = f"SIM-{uuid4().hex[:10]}"
+        services.update_call_status(call_sid, 'completed')
+        conversation_history[call_sid] = [
+            {"role": "system", "content": "당신은 친절한 AI 전화 상담원입니다. 한국어로 간결하고 명확하게 답변해주세요."}
+        ]
+        await sio.emit('call_started', {
+            'call_sid': call_sid,
+            'business': business.name,
+            'phone': business.phone,
+            'simulated': True,
+        })
+        return CallTestResponse(result={
+            'state': 'completed',
+            'call_sid': call_sid,
+            'shop_name': business.name,
+            'phone': business.phone,
+            'simulated': True,
+            'transcript_len': 0,
+            'transcript_preview': [],
+            'slots': {},
+        })
+
+    # 실전화: 기존 start_reservation_call 로 Twilio 호출 (Webhook /voice/start → /voice/process-speech 흐름)
+    summary = services.start_reservation_call(details=plan_details, preferred_name=req.shop_name)
+    if not summary.success or not summary.sid:
+        await sio.emit('call_failed', {
+            'business': business.name,
+            'phone': business.phone,
+            'error': summary.message,
+        })
+        return CallTestResponse(result={
+            'state': 'failed',
+            'error': summary.message,
+            'shop_name': business.name,
+        })
+
+    call_sid = summary.sid
+    conversation_history[call_sid] = [
+        {"role": "system", "content": "당신은 친절한 AI 전화 상담원입니다. 한국어로 간결하고 명확하게 답변해주세요."}
+    ]
+    await sio.emit('call_started', {
+        'call_sid': call_sid,
+        'business': business.name,
+        'phone': business.phone,
+        'simulated': False,
+    })
+    return CallTestResponse(result={
+        'state': 'initiated',
+        'call_sid': call_sid,
+        'shop_name': business.name,
+        'phone': business.phone,
+        'simulated': False,
+    })
+
+    # NOTE: 통합 후 예상 반환 형식 (초안)
+    # return CallTestResponse(result={
+    #   'state': 'completed',
+    #   'call_sid': call_sid,
+    #   'shop_name': shop_name,
+    #   'started_at': started_iso,
+    #   'ended_at': ended_iso,
+    #   'transcript_len': len(transcript),
+    #   'transcript_preview': transcript[:6],
+    #   'slots': slots.to_dict(),
+    #   'error': None,
+    #   'simulated': simulate,
+    #   'candidate_count': len(candidates)
+    # })
 
 
 @app.get("/debug/businesses")
@@ -173,7 +274,12 @@ async def debug_list_businesses(db: Session = Depends(get_db), location: Optiona
 
 @app.get("/call/status/{call_sid}", response_model=CallStatus)
 async def get_call_status(call_sid: str):
-    """런타임에 저장된 통화 상태 & 최근 transcript 일부 반환 (Swagger 테스트용)."""
+    """[Deprecated]
+    런타임에 저장된 통화 상태 & 최근 transcript 일부 반환 (Swagger 테스트/백업 용).
+    프런트엔드는 WebSocket 이벤트(call_started, call_status_update, ai_response_*, call_ended 등)
+    기반으로 상태를 구성해야 하며 일반 흐름에서는 이 엔드포인트를 폴링하지 않습니다.
+    재연결 후 state 복구가 필요한 극히 예외적인 경우만 1회 호출하십시오.
+    """
     status = call_runtime.get_status(call_sid)
     # transcript는 drain하지 않고 내부 dict 직접 접근 (readonly)
     turns = call_runtime._transcripts.get(call_sid, [])  # type: ignore[attr-defined]
@@ -249,16 +355,23 @@ async def handle_voice_start(request: Request, db: Session = Depends(get_db)):
         # 초기 status 저장 (initiated)
         AgentServices(db).update_call_status(call_sid, 'initiated')
     
-    greeting = "안녕하세요! 무엇을 도와드릴까요?"
     response = VoiceResponse()
-    response.say(greeting, voice='Polly.Seoyeon', language='ko-KR')
-    # 프론트엔드 실시간 표시를 위해 초기 에이전트 멘트를 Socket.IO로 전송
+    first_line = "안녕하세요! 무엇을 도와드릴까요?"  # 기본
+    scenario_used = False
+    if settings.scenario_mode and call_sid:
+        steps = load_scenario_steps(settings.scenario_id)
+        if steps:
+            st = ScenarioState(steps)
+            _scenario_sessions[call_sid] = st
+            line = st.next_assistant_line()
+            if line:
+                first_line = line
+                scenario_used = True
+    response.say(first_line, voice='Polly.Seoyeon', language='ko-KR')
     if call_sid:
-        # 대화 기록 초기화 (시나리오 진행도 포함)
         conversation_history.setdefault(call_sid, [{"role": "system", "content": "당신은 친절한 AI 전화 상담원입니다. 한국어로 간결하고 명확하게 답변해주세요."}])
-        conversation_history[call_sid].append({"role": "assistant", "content": greeting})
-        # 대화 기록에 첫 greeting 저장 (시나리오면 이미 idx 0 소비)
-        await sio.emit('ai_response_complete', { 'text': greeting, 'call_sid': call_sid })
+        conversation_history[call_sid].append({"role": "assistant", "content": first_line})
+        await sio.emit('ai_response_complete', { 'text': first_line, 'call_sid': call_sid, 'scenario': scenario_used })
     
     # 첫 번째 사용자 입력을 받기 위해 Gather 동사 추가
     gather = Gather(input='speech',
@@ -301,7 +414,25 @@ async def process_speech(request: Request, db: Session = Depends(get_db)):
 
         
         try:
-            # OpenAI 스트리밍 호출로 토큰 단위 전송
+            # (시나리오 모드) 다음 assistant scripted line 우선 제공
+            scenario_state = _scenario_sessions.get(call_sid) if call_sid else None
+            if settings.scenario_mode and scenario_state:
+                next_line = scenario_state.next_assistant_line()
+                if next_line:
+                    conversation_history[call_sid].append({"role": "assistant", "content": next_line})
+                    services.record_transcript_turn(call_sid, 'assistant', next_line)
+                    response.say(next_line, voice='Polly.Seoyeon', language='ko-KR')
+                    await sio.emit('ai_response_complete', {'text': next_line, 'call_sid': call_sid, 'scenario': True})
+                    # 시나리오 라인만 재생 후 바로 다음 사용자 입력 대기 (LLM 호출 생략)
+                    gather = Gather(input='speech', action='/voice/process-speech', method='POST', speech_timeout='auto', speech_model='experimental_conversations', language='ko-KR')
+                    response.append(gather)
+                    response.redirect('/voice/process-speech', method='POST')
+                    return Response(content=str(response), media_type='application/xml')
+                else:
+                    # 시나리오 종료 후 일반 LLM 전환 알림 한번만
+                    await sio.emit('scenario_finished', {'call_sid': call_sid})
+                    del _scenario_sessions[call_sid]
+            # OpenAI 스트리밍 호출로 토큰 단위 전송 (일반 모드)
             logger.info(f"OpenAI 스트리밍 시작 (SID: {call_sid})")
             # 프론트가 이전 응답 누적을 초기화할 수 있도록 시작 이벤트 emit
             await sio.emit('ai_response_begin', {'call_sid': call_sid})
@@ -453,16 +584,106 @@ async def voice_status_callback(request: Request, db: Session = Depends(get_db))
         # Socket.IO를 통해 프론트엔드에 이벤트 전송
         await sio.emit('call_ended', {'call_sid': call_sid})
         
-        # 대화 기록 삭제
+        # ---- 슬롯 추출 & Plan.status 업데이트 (Item #1) ----
         if call_sid:
+            try:
+                # 1) transcript 수집 (call_runtime 내부 저장 형태: list[dict])
+                raw_turns = call_runtime._transcripts.get(call_sid, [])  # type: ignore[attr-defined]
+                # services.extract_slots_from_transcript 는 turn.text 속성을 기대 → 간단 래퍼 생성
+                class _Wrap:
+                    def __init__(self, text: str):
+                        self.text = text
+                wrapped = [_Wrap(t.get('text', '')) for t in raw_turns]
+                slots = services.extract_slots_from_transcript(wrapped)
+
+                # 2) 기존 Plan.status 로드 → slots 병합하여 재저장
+                snapshot = services.load_plan()
+                plan_obj = snapshot.record
+                details = snapshot.details
+                stage = snapshot.stage
+                # 기존 status JSON 파싱
+                call_payload = None
+                try:
+                    if plan_obj.status:
+                        current_payload = json.loads(plan_obj.status)
+                        call_payload = current_payload.get('call') if isinstance(current_payload, dict) else None
+                except Exception:
+                    logger.warning("plan.status JSON 파싱 실패 → 재생성")
+                payload: Dict[str, Any] = {
+                    'stage': stage,
+                    'plan': details.to_dict(),
+                }
+                if call_payload:
+                    payload['call'] = call_payload
+                else:
+                    # 최소 call 요약 (business_name 추론)
+                    business_name = call_payload.get('business_name') if call_payload else '(unknown)'
+                    payload['call'] = {
+                        'success': call_status == 'completed',
+                        'business_name': business_name,
+                        'status': call_status,
+                        'sid': call_sid,
+                        'message': f'통화 종료 상태: {call_status}',
+                    }
+                payload['slots'] = slots.to_dict()
+                plan_obj.status = json.dumps(payload, ensure_ascii=False)
+                services.db.add(plan_obj)
+                services.db.commit()
+                logger.info(f"슬롯 저장 완료 call_sid={call_sid} slots={payload['slots']}")
+                # 슬롯 저장 완료 이벤트
+                await sio.emit('call_slots_extracted', {
+                    'call_sid': call_sid,
+                    'slots': payload['slots'],
+                })
+            except Exception as exc:
+                logger.error(f"슬롯 추출/저장 실패 call_sid={call_sid}: {exc}", exc_info=True)
+                await sio.emit('call_slots_error', {
+                    'call_sid': call_sid,
+                    'error': str(exc),
+                })
+
+            # 3) 대화 기록 및 runtime cleanup
             if call_sid in conversation_history:
                 del conversation_history[call_sid]
                 logger.info(f"대화 기록 삭제 (SID: {call_sid})")
-            # TODO: call_graph extraction이 끝났는지 확인 후 runtime cleanup (보류)
+            try:
+                call_runtime.cleanup(call_sid)  # type: ignore[attr-defined]
+            except Exception:
+                pass
+            # TODO(Scenario Progress): scenario_finished 상태면 별도 summary 이벤트 push 고려
+
+############################
+# Planner Agent 구조 반영 / 통합 콜 플로우 개선을 위한 TODO 모음 (High-level)
+############################
+# 1. Planner → Call 연계: 현재 PlannerAgent 결과(plan_details)와 별개로 /call 이 독립 실행.
+#    - 목표: /chat 상에서 call 요청 감지 시 plan_details(snapshot)를 기반으로 /call 호출 or 직접 서비스 호출.
+#    - compose_response_node 에 callSuggested 로직 존재. tool_runner_node 의 call tool 과 충돌 여부 점검 필요.
+# 2. FishingPlanDetails 필드 차이: 과거 participants_adults/children → 단일 participants 로 수렴됨.
+#    - 과거 seed/시뮬레이션 코드(build_minimal_plan 등) 정리 필요.
+# 3. PlanSnapshot.persist 구조: plan.status JSON { stage, plan, call } 형식 유지.
+#    - 통화 완료 시 call_summary + slots 추가 확장: { stage, plan, call, slots } 고려.
+# 4. Scenario 모드: main 의 /voice/start 에서 greeting 고정 → scenario 첫 assistant_lines 선재생 필요.
+#    - scenario_loader 로드 + per-call state 저장(dict: scenario_cursor).
+# 5. 실시간 Transcript: assistant_stream_buffers flush 로직과 call_runtime 중복 turn 기록 정리 (중복 최소화).
+# 6. Slot Extraction 시점: 현재 call_graph.extract_node 또는 /voice/status 종료 시점 중 선택.
+#    - 음성 통화의 경우 종료 webhook(/voice/status)에서 transcript snapshot 후 extract 호출 권장.
+# 7. Error Handling: OpenAI 스트림 실패 시 fallback, Twilio 실패 시 HTTP 400. 재시도 정책 정의 필요.
+# 8. Simulation Path: /call simulate=True 와 /call/initiate 차이 통합 -> mode flag + twilio inactive fallback.
+# 9. Websocket Events 표준화: ai_response_begin/text/complete vs scenario_line 이벤트 구분.
+# 10. Cleanup Strategy: call_runtime + conversation_history + scenario_state 모두 종료 이벤트에서 일괄 정리.
+# 11. PlannerAgent missing_keys 있을 때 call 요청 방지 (사전 검증) → /call 진입 시 guard.
+# 12. Tool Integration: call tool 실행 시 /call API 호출 대신 내부 Python 함수 직접 호출 고려.
+# 13. Observability: 통화 lifecycle 로그 ID(call_sid) prefix 통일, timing metrics (started→ended) 계산.
+# 14. Config Flags: settings.scenario_mode, scenario_auto_feed_all 사용 여부 재정의 및 문서화.
+# 15. Tests: test_api.py 확장 - /call happy path + simulate path + slot extraction edge cases.
+
 
     return Response(status_code=200)
 
 # --- 기존의 복잡한 WebSocket 및 미디어 스트리밍 관련 코드는 모두 제거 ---
+
+# 어획량 API 라우터 등록
+app.include_router(fishery_router)
 
 # Socket.IO 앱 마운트 (realtime_server.py에서 가져옴)
 from src.realtime_server import socket_app
@@ -471,4 +692,25 @@ app.mount("/socket.io", socket_app)
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    from src.ssl_generator import generate_self_signed_cert
+    import os
+    
+    # SSL 인증서 생성
+    cert_file, key_file = generate_self_signed_cert()
+    
+    # HTTPS 사용 여부 환경변수로 제어 (기본값: True)
+    use_ssl = os.getenv("USE_SSL", "true").lower() in ("true", "1", "yes")
+    
+    if use_ssl:
+        print(f"Starting HTTPS server with SSL certificate: {cert_file}")
+        uvicorn.run(
+            app, 
+            host="0.0.0.0", 
+            port=8000,
+            ssl_keyfile=key_file,
+            ssl_certfile=cert_file,
+            ssl_version=3,  # TLS 1.2+
+        )
+    else:
+        print("Starting HTTP server (SSL disabled)")
+        uvicorn.run(app, host="0.0.0.0", port=8000)
