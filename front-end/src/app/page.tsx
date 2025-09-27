@@ -3,6 +3,8 @@ import RealtimeTranscription from '@/components/dashboard/realtime-transcription
 import Chatbot from '@/components/dashboard/chatbot';
 import InformationSummary from '@/components/dashboard/information-summary';
 import FishingYieldChart from '@/components/dashboard/fishing-yield-chart';
+import SocketDebug from '@/components/debug/SocketDebug';
+import PhoneCall from '@/components/phone/PhoneCall';
 
 export default function Home() {
   const fullTranscript = `Agent: Thank you for calling Aqua Adventures, this is Sarah speaking. How can I help you today?
@@ -25,14 +27,15 @@ Agent: You're welcome! Have a great day.`;
       <main className="flex-1 p-4 sm:p-6 md:p-8">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-full">
           <div className="lg:col-span-2 flex flex-col gap-6">
-            <Chatbot />
+            <PhoneCall />
+            <SocketDebug />
           </div>
           <div className="lg:col-span-1 flex flex-col gap-6 h-[calc(100vh-10rem)]">
             <div className="flex flex-col h-1/2">
                 <InformationSummary transcript={fullTranscript} />
             </div>
             <div className="flex flex-col h-1/2">
-                <RealtimeTranscription transcript={fullTranscript} />
+                <RealtimeTranscription />
             </div>
             <FishingYieldChart />
           </div>

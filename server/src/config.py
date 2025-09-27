@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     account_sid: str
     auth_token: str 
     us_phonenumber: str
+    ko_phonenumber: str | None = None
     
     # OpenAI 설정
     openai_api_key: str
@@ -34,7 +35,7 @@ class Settings(BaseSettings):
     # WebSocket 서버 설정
     websocket_host: str = "0.0.0.0"
     websocket_port: int = 8001
-    cors_origins: str = "http://localhost:3000,http://localhost:9002"
+    cors_origins: str = "http://localhost:3000,http://localhost:9002,null"
     
     # Twilio Media Stream 설정
     twilio_webhook_url: str = "https://your-domain.ngrok.io"
