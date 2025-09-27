@@ -87,6 +87,8 @@ openai_client = openai.OpenAI(api_key=settings.openai_api_key)
 conversation_history: Dict[str, List[Dict[str, str]]] = {}
 assistant_stream_buffers: Dict[str, str] = {}
 _scenario_sessions: Dict[str, ScenarioState] = {}  # call_sid -> ScenarioState
+_scenario_hangup_done: set[str] = set()  # 시나리오 자동 종료/행업 완료된 콜 SID 저장 (재요청 방어)
+_scenario_completed: set[str] = set()  # 마지막 시나리오 라인까지 재생 완료 (hangup 직후/직전) 표시
 
 ############################
 # 기존 함수 in_scenario 재정의 완료
@@ -397,6 +399,16 @@ async def process_speech(request: Request, db: Session = Depends(get_db)):
 
     response = VoiceResponse()
 
+    hangup_issued = False  # 마지막에 gather/redirect 생략 결정 플래그
+
+    # --- 시나리오 자동 종료된 콜이 재호출되는 방어 (Twilio 재요청 등) ---
+    if settings.scenario_mode and call_sid and (
+        call_sid in _scenario_hangup_done or call_sid in _scenario_completed
+    ):
+        logger.info(f"재진입 차단: 이미 시나리오 종료 표기된 콜 재요청 call_sid={call_sid}")
+        response.hangup()
+        return Response(content=str(response), media_type='application/xml')
+
     if user_speech:
         # 프론트엔드로 사용자 발화 전송 (call_sid 포함)
         await sio.emit('user_speech', {'text': user_speech, 'call_sid': call_sid})
@@ -415,22 +427,88 @@ async def process_speech(request: Request, db: Session = Depends(get_db)):
             # (시나리오 모드) 다음 assistant scripted line 우선 제공
             scenario_state = _scenario_sessions.get(call_sid) if call_sid else None
             if settings.scenario_mode and scenario_state:
+                logger.debug(
+                    "[Scenario] call_sid=%s cursor=%s len=%s finished=%s auto_hangup=%s closing_prompt=%s",
+                    call_sid, getattr(scenario_state, 'cursor', None), len(getattr(scenario_state, 'steps', [])),
+                    scenario_state.finished(), settings.scenario_auto_hangup, bool(settings.scenario_closing_prompt)
+                )
                 next_line = scenario_state.next_assistant_line()
                 if next_line:
+                    # 남은 라인이 더 있는지 미리 확인 (cursor 변경 이후 finished() 검사)
+                    more_after = not scenario_state.finished()
+                    # --- 단일 라인 즉시 전송 (chunk 분할 제거) ---
+                    await sio.emit('ai_response_begin', {'call_sid': call_sid, 'scenario': True})
+                    # 호환성을 위해 한 번의 text_delta 이벤트를 보내고 곧바로 complete
+                    await sio.emit('ai_response_text', {
+                        'text_delta': next_line,
+                        'call_sid': call_sid,
+                        'scenario': True,
+                        'chunk_index': 0,
+                        'is_last_chunk': True
+                    })
+                    await sio.emit('ai_response_complete', {
+                        'text': next_line,
+                        'call_sid': call_sid,
+                        'scenario': True,
+                        'chunks': 1,
+                        'stream_mode': 'single'
+                    })
                     conversation_history[call_sid].append({"role": "assistant", "content": next_line})
                     services.record_transcript_turn(call_sid, 'assistant', next_line)
                     response.say(next_line, voice='Polly.Seoyeon', language='ko-KR')
-                    await sio.emit('ai_response_complete', {'text': next_line, 'call_sid': call_sid, 'scenario': True})
-                    # 시나리오 라인만 재생 후 바로 다음 사용자 입력 대기 (LLM 호출 생략)
-                    gather = Gather(input='speech', action='/voice/process-speech', method='POST', speech_timeout='auto', speech_model='experimental_conversations', language='ko-KR')
-                    response.append(gather)
-                    response.redirect('/voice/process-speech', method='POST')
-                    return Response(content=str(response), media_type='application/xml')
+                    if more_after:
+                        # 다음 사용자 입력 대기
+                        gather = Gather(input='speech', action='/voice/process-speech', method='POST', speech_timeout='auto', speech_model='experimental_conversations', language='ko-KR')
+                        response.append(gather)
+                        response.redirect('/voice/process-speech', method='POST')
+                        return Response(content=str(response), media_type='application/xml')
+                    else:
+                        # 이것이 마지막 시나리오 라인 → 종료 처리
+                        await sio.emit('scenario_finished', {'call_sid': call_sid})
+                        try:
+                            del _scenario_sessions[call_sid]
+                        except KeyError:
+                            pass
+                        if settings.scenario_auto_hangup:
+                            # 즉시 Hangup (closing prompt 지연 제거)
+                            _scenario_completed.add(call_sid)
+                            # 마지막 라인 재생 후 짧은 pause 로 UI/음성 동기화 보장
+                            # 마지막 라인 음성 재생 후 Pause TwiML 삽입 → 클라이언트 & Twilio TTS 동기화 확보
+                            pause_len = max(0, getattr(settings, 'scenario_final_pause_seconds', 1))
+                            if pause_len > 0:
+                                from twilio.twiml.voice_response import Pause
+                                response.pause(length=str(pause_len))
+                            response.hangup()
+                            hangup_issued = True
+                            _scenario_hangup_done.add(call_sid)
+                            logger.info(f"시나리오 마지막 라인 chunk 스트리밍 + Pause({pause_len}s) 후 Hangup call_sid={call_sid}")
+                            return Response(content=str(response), media_type='application/xml')
+                        # auto hangup 아니면 LLM 일반 모드 전환 (fall-through)
+                        else:
+                            logger.debug(f"시나리오 마지막 라인 후 auto_hangup 비활성 → LLM 모드 전환 call_sid={call_sid}")
                 else:
-                    # 시나리오 종료 후 일반 LLM 전환 알림 한번만
+                    # 방어: finished 상태인데 next_line이 None → scenario_finished
                     await sio.emit('scenario_finished', {'call_sid': call_sid})
-                    del _scenario_sessions[call_sid]
+                    try:
+                        del _scenario_sessions[call_sid]
+                    except KeyError:
+                        pass
+                    if settings.scenario_auto_hangup:
+                        _scenario_completed.add(call_sid)
+                        response.hangup()
+                        hangup_issued = True
+                        _scenario_hangup_done.add(call_sid)
+                        logger.info(f"시나리오 finished(None) 즉시 Hangup call_sid={call_sid}")
+                        return Response(content=str(response), media_type='application/xml')
+                    else:
+                        logger.debug(f"시나리오 종료 되었으나 auto_hangup 비활성 → 일반 LLM 전환 call_sid={call_sid}")
             # OpenAI 스트리밍 호출로 토큰 단위 전송 (일반 모드)
+            # Scenario hangup 완료된 콜 재진입 방지 - 혹시 위에서 상태 추가 후 여기까지 떨어졌다면 즉시 종료
+            if call_sid and (call_sid in _scenario_hangup_done or call_sid in _scenario_completed):
+                logger.warning(f"시나리오 hangup 완료 콜 LLM 브랜치 접근 차단 call_sid={call_sid}")
+                response.hangup()
+                hangup_issued = True
+                return Response(content=str(response), media_type='application/xml')
             logger.info(f"OpenAI 스트리밍 시작 (SID: {call_sid})")
             # 프론트가 이전 응답 누적을 초기화할 수 있도록 시작 이벤트 emit
             await sio.emit('ai_response_begin', {'call_sid': call_sid})
@@ -537,16 +615,16 @@ async def process_speech(request: Request, db: Session = Depends(get_db)):
         logger.info(f"사용자 입력 없음 (SID: {call_sid})")
         response.say("아무 말씀도 안 하셨네요. 도움이 필요하시면 말씀해주세요.", voice='Polly.Seoyeon', language='ko-KR')
 
-    # 다시 사용자 입력을 기다림
-    gather = Gather(input='speech',
-                    action='/voice/process-speech',
-                    method='POST',
-                    speech_timeout='auto',
-                    speech_model='experimental_conversations',
-                    language='ko-KR')
-    response.append(gather)
-    
-    response.redirect('/voice/process-speech', method='POST')
+    if not hangup_issued:
+        # 다시 사용자 입력을 기다림 (hangup이 아닌 경우만)
+        gather = Gather(input='speech',
+                        action='/voice/process-speech',
+                        method='POST',
+                        speech_timeout='auto',
+                        speech_model='experimental_conversations',
+                        language='ko-KR')
+        response.append(gather)
+        response.redirect('/voice/process-speech', method='POST')
 
     return Response(content=str(response), media_type="application/xml")
 
