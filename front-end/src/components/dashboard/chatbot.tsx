@@ -206,7 +206,7 @@ export default function Chatbot() {
     }, [messages]);
 
     return (
-        <Card className="flex flex-col h-full min-h-[80vh]">
+        <Card className="flex flex-col min-h-[80vh]">
             <CardContent className="flex-1 flex flex-col p-4 gap-4 overflow-hidden">
                 <ScrollArea className="h-[80vh] pr-4 -mr-4" ref={scrollAreaRef}>
                     <div className="space-y-4">

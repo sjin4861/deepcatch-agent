@@ -175,21 +175,6 @@ export default function InformationSummary() {
                             {mapMetadata && (
                                 <MapRoutePreview metadata={mapMetadata} />
                             )}
-                            {metadataEntries.length > 0 && (
-                                <div className="rounded-xl border border-border/40 bg-background/80 p-3">
-                                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Details</p>
-                                    <dl className="mt-2 space-y-1 text-xs text-foreground/80">
-                                        {metadataEntries.map(([key, value]) => (
-                                            <div key={key} className="flex items-start justify-between gap-2">
-                                                <dt className="font-medium capitalize text-foreground/70">{key.replace(/_/g, ' ')}</dt>
-                                                <dd className="text-right text-foreground/80">
-                                                    {renderMetadataValue(value)}
-                                                </dd>
-                                            </div>
-                                        ))}
-                                    </dl>
-                                </div>
-                            )}
                         </div>
 
                         <div className="flex items-center justify-between gap-3">
