@@ -23,5 +23,6 @@ dependencies = [
     "aiofiles>=24.1.0",
     "aiohttp>=3.10.0",
     "cryptography>=42.0.0",
-    "httpx>=0.25.0",
+    # httpx ambiguous resolution issue (multiple candidates). Pin exact.
+    "httpx==0.27.2",
 ]
