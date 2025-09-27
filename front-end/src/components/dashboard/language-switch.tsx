@@ -18,7 +18,6 @@ export default function LanguageSwitch() {
                         <span className="flex items-center gap-2">
                             {item.flag && <span>{item.flag}</span>}
                             <span>{item.label}</span>
-                            {item.isAlpha && <span className="text-[10px] text-muted-foreground">α</span>}
                         </span>
                     </SelectItem>
                 ))}

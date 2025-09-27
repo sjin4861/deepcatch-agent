@@ -112,6 +112,45 @@ def test_chat_flow_applies_defaults_when_requested():
     assert route_payload.get("mode") == "DRIVING"
     assert route_payload.get("distance_km")
 
+
+def test_chat_flow_includes_fishery_catch_tool_result():
+        mock_payload = {
+            "plan_updates": {},
+            "missing_information": [
+                "date",
+                "participants",
+                "departure",
+                "fishing_type",
+                "budget",
+                "gear",
+                "transportation",
+            ],
+            "summary": ["새로운 계획 정보가 감지되지 않았습니다."],
+        }
+
+        message = (
+            "모든 정보를 알아서 채워주고 작년 추석 연휴(2024-09-16~2024-09-18)에 "
+            "가장 많이 잡힌 물고기도 알려줘"
+        )
+        with planner_agent.mock_response(mock_payload):
+            r = client.post("/chat", json={"message": message})
+
+        assert r.status_code == 200
+        data = r.json()
+        fishery_results = [
+            result
+            for result in data["toolResults"]
+            if result.get("toolName") == "fishery_catch"
+        ]
+        assert fishery_results, "fishery_catch tool result should be present"
+
+        metadata = fishery_results[0].get("metadata", {})
+        assert metadata.get("analysisRange")
+        assert metadata.get("topSpecies"), "topSpecies data should be included"
+        assert metadata.get("chartTimeline"), "chartTimeline should be provided"
+        summary_text = fishery_results[0].get("content", "")
+        assert "어획량이" in summary_text
+
 def test_businesses_list():
     r = client.get("/businesses")
     assert r.status_code == 200

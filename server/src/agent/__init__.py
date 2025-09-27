@@ -1,7 +1,6 @@
 from .conversation_models import (
     CallSummary,
     FishingPlanDetails,
-    FishReport,
     PlanSnapshot,
     WeatherReport,
 )
@@ -28,7 +27,6 @@ __all__ = [
     "PlanSnapshot",
     "FishingPlanDetails",
     "WeatherReport",
-    "FishReport",
     "CallSummary",
     "ToolRegistry",
     "ConversationTool",
