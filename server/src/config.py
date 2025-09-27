@@ -28,6 +28,8 @@ class Settings(BaseSettings):
     
     # OpenAI 설정
     openai_api_key: str
+    openai_model: str | None = None
+    openai_temperature: float | None = None
     openai_realtime_model: str = "gpt-4o-realtime-preview-2024-10-01"
     openai_realtime_voice: str = "alloy"
     openai_realtime_temperature: float = 0.7

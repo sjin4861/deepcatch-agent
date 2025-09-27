@@ -1,5 +1,4 @@
 from sqlalchemy import Column, Integer, String, Boolean, Text
-from sqlalchemy.orm import relationship
 from .database import Base
 
 class Plan(Base):
@@ -9,7 +8,7 @@ class Plan(Base):
     time = Column(String, nullable=True)
     people = Column(Integer, nullable=True)
     location = Column(String, nullable=True)
-    phone_user = Column(String, nullable=True)
+    departure = Column(String, nullable=True)
     status = Column(String, default="collecting")  # collecting, searching, calling, completed
 
 class Business(Base):

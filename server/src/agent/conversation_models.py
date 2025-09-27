@@ -26,15 +26,13 @@ class FishingPlanDetails:
     date: Optional[str] = None
     time: Optional[str] = None
     location: Optional[str] = None
-    participants_adults: Optional[int] = None
-    participants_children: Optional[int] = None
-    participants_total: Optional[int] = None
+    departure: Optional[str] = None
+    participants: Optional[int] = None
     fishing_type: Optional[str] = None
     budget: Optional[str] = None
     gear: Optional[str] = None
     transportation: Optional[str] = None
     target_species: Optional[str] = None
-    phone_user: Optional[str] = None
 
     def copy(self) -> "FishingPlanDetails":
         return replace(self)
@@ -46,8 +44,10 @@ class FishingPlanDetails:
         required: List[str] = []
         if not self.date:
             required.append("date")
-        if self.participants_adults is None or self.participants_children is None:
+        if self.participants is None:
             required.append("participants")
+        if not self.departure:
+            required.append("departure")
         if not self.fishing_type:
             required.append("fishing_type")
         if not self.budget:
@@ -56,8 +56,6 @@ class FishingPlanDetails:
             required.append("gear")
         if not self.transportation:
             required.append("transportation")
-        if not self.phone_user:
-            required.append("phone_user")
         return required
 
 
@@ -162,10 +160,10 @@ class ConversationState(TypedDict, total=False):
 
 FRIENDLY_LABELS: Dict[str, str] = {
     "date": "출조 날짜",
-    "participants": "참여 인원 (성인/어린이)",
+    "participants": "참여 인원",
+    "departure": "출발지/집결지",
     "fishing_type": "낚시 유형",
     "budget": "예산",
     "gear": "장비 준비",
     "transportation": "이동 수단",
-    "phone_user": "연락처",
 }

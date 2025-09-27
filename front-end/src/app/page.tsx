@@ -12,7 +12,7 @@ export default function Home() {
             <main className="flex-1 p-4 sm:p-6 md:p-8">
                 <AgentInsightsProvider>
                     <TranscriptionProvider>
-                        <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,2fr)_minmax(0,1fr)] h-full">
+                        <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] h-full">
                             <section className="flex flex-col gap-6 min-h-0">
                                 <Chatbot />
                             </section>
