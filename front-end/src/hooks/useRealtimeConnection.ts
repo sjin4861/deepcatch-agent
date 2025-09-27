@@ -37,6 +37,14 @@ interface ConversationStateUpdate {
   timestamp: string;
 }
 
+interface ScenarioProgressUpdate {
+  call_sid: string;
+  scenario_id: string;
+  consumed: number;
+  total: number;
+  is_complete: boolean;
+}
+
 // Hook의 반환 타입
 interface UseRealtimeConnectionReturn {
   // 연결 상태
@@ -53,6 +61,9 @@ interface UseRealtimeConnectionReturn {
   aiResponse: string;
   conversationState: ConversationStateUpdate | null;
   sessionId: string | null;
+  latestUserSpeech: string; // Twilio 사용자 발화 최신 텍스트
+  conversation: ConversationTurn[]; // 멀티턴 대화 (실시간)
+  scenarioProgress: ScenarioProgressUpdate | null;
   
   // 액션 함수들
   joinCallRoom: (callSid: string) => void;
@@ -61,6 +72,14 @@ interface UseRealtimeConnectionReturn {
   startCall: () => void;
   stopCall: () => void;
   sendText: (text: string) => void;
+}
+
+// 멀티턴 대화 턴 타입
+export interface ConversationTurn {
+  id: string;
+  role: 'user' | 'assistant';
+  text: string; // 현재까지 누적(assistant 스트리밍 포함)
+  isStreaming: boolean; // assistant 응답이 아직 진행 중인지 표시
 }
 
 // 환경변수에서 Socket.IO 서버 URL 가져오기
@@ -75,8 +94,11 @@ export const useRealtimeConnection = (): UseRealtimeConnectionReturn => {
   const [callStatus, setCallStatus] = useState<CallStatusUpdate | null>(null);
   const [transcription, setTranscription] = useState<TranscriptionUpdate | null>(null);
   const [aiResponse, setAIResponse] = useState<string>('');
+  const [latestUserSpeech, setLatestUserSpeech] = useState<string>('');
   const [conversationState, setConversationState] = useState<ConversationStateUpdate | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
+  const [conversation, setConversation] = useState<ConversationTurn[]>([]);
+  const [scenarioProgress, setScenarioProgress] = useState<ScenarioProgressUpdate | null>(null);
   
   // Socket 인스턴스 관리
   const socketRef = useRef<Socket | null>(null);
@@ -128,6 +150,54 @@ export const useRealtimeConnection = (): UseRealtimeConnectionReturn => {
     socket.on('call_status_update', (data: CallStatusUpdate) => {
       console.log('📞 통화 상태 업데이트:', data);
       setCallStatus(data);
+    });
+
+    // Twilio: 사용자 발화 (server emits 'user_speech')
+    socket.on('user_speech', (data: { text: string }) => {
+      console.log('🗣️ 사용자 발화 수신 (Twilio):', data);
+      setLatestUserSpeech(data.text);
+      // transcription 상태에도 반영 (speaker 구분)
+      setTranscription({
+        call_sid: currentCallSidRef.current || 'twilio-call',
+        text: data.text,
+        is_final: true,
+        speaker: 'user',
+        timestamp: new Date().toISOString(),
+      });
+      // 멀티턴 대화 추가
+      setConversation(prev => [...prev, {
+        id: `user-${Date.now()}-${Math.random().toString(36).slice(2,7)}`,
+        role: 'user',
+        text: data.text,
+        isStreaming: false,
+      }]);
+    });
+
+    // Twilio: AI 응답 (server emits 'ai_response')
+    socket.on('ai_response', (data: { text: string }) => {
+      console.log('🤖 Twilio AI 응답 수신:', data);
+      setAIResponse(data.text);
+      setTranscription({
+        call_sid: currentCallSidRef.current || 'twilio-call',
+        text: data.text,
+        is_final: true,
+        speaker: 'assistant',
+        timestamp: new Date().toISOString(),
+      });
+      // Twilio 단발 assistant 응답을 확정 턴으로 추가
+      setConversation(prev => [...prev, {
+        id: `assistant-${Date.now()}-${Math.random().toString(36).slice(2,7)}`,
+        role: 'assistant',
+        text: data.text,
+        isStreaming: false,
+      }]);
+    });
+
+    // Twilio: 통화 종료
+    socket.on('call_ended', (data: { call_sid?: string }) => {
+      console.log('📴 Twilio 통화 종료 이벤트 수신:', data);
+      setIsCallActive(false);
+      currentCallSidRef.current = null;
     });
     
     // 실시간 전사 결과 수신
@@ -204,12 +274,62 @@ export const useRealtimeConnection = (): UseRealtimeConnectionReturn => {
     socket.on('ai_response_text', (data: { text_delta: string }) => {
       console.log('🤖 AI 텍스트 델타:', data);
       setAIResponse(prev => prev + data.text_delta);
+      setConversation(prev => {
+        const delta = data.text_delta ?? '';
+        const trimmed = delta.replace(/\r?\n/g, '');
+        // 비어있는 델타(공백/UI에 보이지 않는)면 기존 스트리밍 턴 없을 때만 placeholder 턴 생성
+        if (prev.length > 0) {
+          const last = prev[prev.length - 1];
+          if (last.role === 'assistant' && last.isStreaming) {
+            if (delta.length === 0) return prev; // 아무 변화 없음
+            const updated = { ...last, text: last.text + delta };
+            return [...prev.slice(0, -1), updated];
+          }
+        }
+        if (trimmed.length === 0) {
+          // placeholder 턴 (나중에 complete에서 교체 가능)
+          return [...prev, {
+            id: `assistant-${Date.now()}-${Math.random().toString(36).slice(2,7)}`,
+            role: 'assistant',
+            text: '',
+            isStreaming: true,
+          }];
+        }
+        return [...prev, {
+          id: `assistant-${Date.now()}-${Math.random().toString(36).slice(2,7)}`,
+          role: 'assistant',
+          text: delta,
+          isStreaming: true,
+        }];
+      });
     });
 
     // OpenAI AI 응답 완료
     socket.on('ai_response_complete', (data: { text: string }) => {
       console.log('✅ AI 응답 완료:', data);
       setAIResponse(data.text);
+      setConversation(prev => {
+        if (prev.length === 0) {
+          // 초기 인사 (greeting) 케이스
+          return [{
+            id: `assistant-${Date.now()}-${Math.random().toString(36).slice(2,7)}`,
+            role: 'assistant',
+            text: data.text,
+            isStreaming: false,
+          }];
+        }
+        const last = prev[prev.length - 1];
+        if (last.role === 'assistant') {
+          const updated = { ...last, text: data.text, isStreaming: false };
+          return [...prev.slice(0, -1), updated];
+        }
+        return [...prev, {
+          id: `assistant-${Date.now()}-${Math.random().toString(36).slice(2,7)}`,
+          role: 'assistant',
+          text: data.text,
+          isStreaming: false,
+        }];
+      });
     });
 
     // OpenAI 오디오 응답
@@ -230,6 +350,34 @@ export const useRealtimeConnection = (): UseRealtimeConnectionReturn => {
     socket.on('openai_error', (data: { error: string }) => {
       console.error('🚨 OpenAI 오류:', data);
       setCallError(data.error);
+    });
+
+    // 시나리오 진행 상황
+    socket.on('scenario_progress', (data: ScenarioProgressUpdate) => {
+      console.log('📊 시나리오 진행:', data);
+      setScenarioProgress(data);
+    });
+
+    // AI 응답 시작 (시나리오/스트리밍 공통 프리앰블)
+    socket.on('ai_response_begin', (data: { call_sid?: string }) => {
+      console.log('🚧 AI 응답 시작 이벤트:', data);
+      // 직전 assistant 스트리밍이 완료되지 않았다면 그대로 두고, 모두 완료된 상태면 새 placeholder 생성
+      setAIResponse('');
+      setConversation(prev => {
+        if (prev.length > 0) {
+          const last = prev[prev.length - 1];
+          if (last.role === 'assistant' && last.isStreaming) {
+            // 이미 스트리밍 중이면 중복 생성 방지
+            return prev;
+          }
+        }
+        return [...prev, {
+          id: `assistant-${Date.now()}-${Math.random().toString(36).slice(2,7)}`,
+          role: 'assistant',
+          text: '',
+          isStreaming: true,
+        }];
+      });
     });
     
     // 정리 함수
@@ -271,6 +419,7 @@ export const useRealtimeConnection = (): UseRealtimeConnectionReturn => {
     setCallStatus(null);
     setTranscription(null);
     setAIResponse('');
+    setConversation([]);
     setConversationState(null);
     setCallError(null);
     setSessionId(null);
@@ -338,11 +487,15 @@ export const useRealtimeConnection = (): UseRealtimeConnectionReturn => {
     aiResponse,
     conversationState,
     sessionId,
+    // 추가 노출: 최근 사용자 발화 (Twilio)
+    latestUserSpeech,
     joinCallRoom,
     leaveCallRoom,
     clearData,
     startCall,
     stopCall,
     sendText,
+    conversation,
+    scenarioProgress,
   };
 };
