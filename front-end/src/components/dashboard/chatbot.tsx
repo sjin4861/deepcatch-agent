@@ -10,19 +10,21 @@ import { useTranscription } from '@/context/transcription-context';
 import { API_BASE_URL } from '@/lib/config';
 import { useToast } from '@/hooks/use-toast';
 import { useAgentInsights } from '@/context/agent-insights-context';
+import { useLocale } from '@/context/locale-context';
 import type { AgentChatResponse, ToolResult, ToolResultPayload } from '@/types/agent';
 
 type Message = {
     id: string;
-    text: string;
     sender: 'user' | 'bot';
+    text?: string;
     status?: 'pending' | 'delivered';
+    variant?: 'call-suggestion';
 };
 
 function resolveCallEndpoint() {
-    // if (API_BASE_URL) {
-    //     return `${API_BASE_URL.replace(/\/$/, '')}/call`;
-    // }
+    if (API_BASE_URL) {
+        return `${API_BASE_URL.replace(/\/$/, '')}/call`;
+    }
     return '/api/mock/call';
 }
 
@@ -77,17 +79,27 @@ function createMessageId(prefix: 'user' | 'bot') {
 }
 
 export default function Chatbot() {
+    const { t } = useLocale();
+    const initialGreeting = t('chatbot.initialGreeting');
     const [messages, setMessages] = useState<Message[]>([
-        { id: createMessageId('bot'), text: 'Hello! How can I assist you today?', sender: 'bot', status: 'delivered' },
+        { id: createMessageId('bot'), text: initialGreeting, sender: 'bot', status: 'delivered' },
     ]);
     const [inputValue, setInputValue] = useState('');
-    const [callSuggested, setCallSuggested] = useState(false);
     const [isCalling, setIsCalling] = useState(false);
     const [isSending, setIsSending] = useState(false);
     const { start, isActive, hasAttempted } = useTranscription();
     const { toast } = useToast();
     const { recordToolResults } = useAgentInsights();
     const scrollAreaRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        setMessages(prev => {
+            if (prev.length === 1 && prev[0]?.sender === 'bot' && !prev[0]?.variant) {
+                return [{ ...prev[0], text: initialGreeting }];
+            }
+            return prev;
+        });
+    }, [initialGreeting]);
 
     const handleSendMessage = useCallback(async () => {
         const text = inputValue.trim();
@@ -102,7 +114,11 @@ export default function Chatbot() {
             status: 'delivered',
         };
 
-        setMessages(prev => [...prev, userMessage, { id: 'agent-pending', text: 'Thinking…', sender: 'bot', status: 'pending' }]);
+        setMessages(prev => [
+            ...prev,
+            userMessage,
+            { id: 'agent-pending', text: t('chatbot.pending'), sender: 'bot', status: 'pending' },
+        ]);
         setInputValue('');
         setIsSending(true);
 
@@ -136,24 +152,35 @@ export default function Chatbot() {
                         status: 'delivered',
                     });
                 }
+
+                if (payload.callSuggested) {
+                    const hasCallSuggestion = next.some(message => message.variant === 'call-suggestion');
+                    if (!hasCallSuggestion) {
+                        next.push({
+                            id: createMessageId('bot'),
+                            sender: 'bot',
+                            status: 'delivered',
+                            variant: 'call-suggestion',
+                        });
+                    }
+                }
+
                 return next;
             });
-
-            if (payload.callSuggested) {
-                setCallSuggested(true);
-            }
         } catch (error) {
-            const message = error instanceof Error ? error.message : 'Failed to fetch agent response.';
+            const fallback = t('chatbot.toast.messageFailed.description');
+            console.error('Failed to fetch agent response', error);
+            const message = fallback;
             toast({
                 variant: 'destructive',
-                title: 'Message failed',
+                title: t('chatbot.toast.messageFailed.title'),
                 description: message,
             });
             setMessages(prev => prev.filter(message => message.id !== 'agent-pending'));
         } finally {
             setIsSending(false);
         }
-    }, [inputValue, isSending, recordToolResults, toast]);
+    }, [inputValue, isSending, recordToolResults, t, toast]);
 
     const handleStartCall = async () => {
         setIsCalling(true);
@@ -170,26 +197,18 @@ export default function Chatbot() {
                 throw new Error(`Failed to start call (${response.status})`);
             }
 
-            setMessages(prev => [
-                ...prev,
-                {
-                    id: createMessageId('bot'),
-                    text: 'Great! I\'m dialing the fishing charter now. Watch the Live Transcription panel for the conversation.',
-                    sender: 'bot',
-                    status: 'delivered',
-                },
-            ]);
-
             await start();
             toast({
-                title: 'Call started',
-                description: 'Streaming live transcription from the charter call.',
+                title: t('chatbot.toast.callStarted.title'),
+                description: t('chatbot.toast.callStarted.description'),
             });
         } catch (error) {
-            const message = error instanceof Error ? error.message : 'Failed to start the call.';
+            const fallback = t('chatbot.toast.callFailed.description');
+            console.error('Call start failed', error);
+            const message = fallback;
             toast({
                 variant: 'destructive',
-                title: 'Call Failed',
+                title: t('chatbot.toast.callFailed.title'),
                 description: message,
             });
         } finally {
@@ -207,65 +226,76 @@ export default function Chatbot() {
     }, [messages]);
 
     return (
-        <Card className="flex flex-col h-full min-h-[80vh]">
+        <Card className="flex flex-col min-h-[80vh]">
             <CardContent className="flex-1 flex flex-col p-4 gap-4 overflow-hidden">
                 <ScrollArea className="h-[80vh] pr-4 -mr-4" ref={scrollAreaRef}>
                     <div className="space-y-4">
-                        {messages.map((message, index) => (
-                            <div key={message.id ?? index} className={`flex ${message.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
-                                <div className={`max-w-xs lg:max-w-md rounded-lg px-4 py-2 shadow-sm ${message.sender === 'user' ? 'bg-primary text-primary-foreground' : 'bg-secondary'}`}>
-                                    {message.status === 'pending' ? (
-                                        <span className="inline-flex items-center gap-2 text-sm text-muted-foreground">
-                                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                            {message.text}
-                                        </span>
-                                    ) : (
-                                        <span className="whitespace-pre-line break-words">{message.text}</span>
-                                    )}
+                        {messages.map((message, index) => {
+                            const isUser = message.sender === 'user';
+                            const isPending = message.status === 'pending';
+                            const isCallSuggestion = message.variant === 'call-suggestion';
+                            const bubbleColor = isCallSuggestion
+                                ? 'bg-accent/20 text-foreground border border-accent/40'
+                                : isUser
+                                    ? 'bg-primary text-primary-foreground'
+                                    : 'bg-secondary';
+                            return (
+                                <div key={message.id ?? index} className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
+                                    <div
+                                        className={`max-w-xs lg:max-w-md rounded-lg px-4 py-2 shadow-sm ${bubbleColor}`}
+                                    >
+                                        {isPending ? (
+                                            <span className="inline-flex items-center gap-2 text-sm text-muted-foreground">
+                                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                                {message.text ?? t('chatbot.pending')}
+                                            </span>
+                                        ) : isCallSuggestion ? (
+                                            <div className="space-y-3 text-sm">
+                                                <div className="font-medium text-foreground">
+                                                    {t('chatbot.callSuggestion.title')}
+                                                </div>
+                                                <p className="text-muted-foreground">
+                                                    {t('chatbot.callSuggestion.description')}
+                                                </p>
+                                                <Button
+                                                    onClick={handleStartCall}
+                                                    disabled={isCalling || isActive}
+                                                    className="w-fit flex items-center gap-2"
+                                                >
+                                                    {isCalling ? (
+                                                        <>
+                                                            <Loader2 className="h-4 w-4 animate-spin" />
+                                                            {t('transcription.dialingButton')}
+                                                        </>
+                                                    ) : (
+                                                        <>
+                                                            <PhoneCall className="h-4 w-4" />
+                                                            {isActive
+                                                                ? t('chatbot.callButton.callInProgress')
+                                                                : hasAttempted
+                                                                    ? t('chatbot.callButton.restart')
+                                                                    : t('chatbot.callButton.start')}
+                                                        </>
+                                                    )}
+                                                </Button>
+                                                {isActive && (
+                                                    <p className="text-xs text-muted-foreground">
+                                                        {t('chatbot.callSuggestion.note')}
+                                                    </p>
+                                                )}
+                                            </div>
+                                        ) : (
+                                            <span className="whitespace-pre-line break-words">{message.text}</span>
+                                        )}
+                                    </div>
                                 </div>
-                            </div>
-                        ))}
+                            );
+                        })}
                     </div>
-                    {callSuggested && (
-                        <div className="border border-dashed border-accent/40 bg-accent/10 rounded-lg p-4 space-y-3 text-sm">
-                            <div className="font-medium text-foreground">
-                                Ready to confirm availability?
-                            </div>
-                            <p className="text-muted-foreground">
-                                I can connect with the charter and stream the conversation live. Start the call whenever you&apos;re ready.
-                            </p>
-                            <Button
-                                onClick={handleStartCall}
-                                disabled={isCalling || isActive}
-                                className="w-fit flex items-center gap-2"
-                            >
-                                {isCalling ? (
-                                    <>
-                                        <Loader2 className="h-4 w-4 animate-spin" />
-                                        Dialing...
-                                    </>
-                                ) : (
-                                    <>
-                                        <PhoneCall className="h-4 w-4" />
-                                        {isActive
-                                            ? 'Call in Progress'
-                                            : hasAttempted
-                                                ? 'Restart Call'
-                                                : 'Start Call'}
-                                    </>
-                                )}
-                            </Button>
-                            {isActive && (
-                                <p className="text-xs text-muted-foreground">
-                                    Live transcription is flowing to the panel on the right.
-                                </p>
-                            )}
-                        </div>
-                    )}
                     </ScrollArea>
                 <div className="flex gap-2">
                     <Input
-                        placeholder="Type a message..."
+                        placeholder={t('chatbot.input.placeholder')}
                         value={inputValue}
                         onChange={(e) => setInputValue(e.target.value)}
                         onKeyDown={(e) => {
@@ -273,10 +303,10 @@ export default function Chatbot() {
                                 void handleSendMessage();
                             }
                         }}
-                        aria-label="Chat message input"
+                        aria-label={t('chatbot.input.ariaLabel')}
                         disabled={isSending}
                     />
-                    <Button onClick={() => void handleSendMessage()} aria-label="Send message" disabled={isSending}>
+                    <Button onClick={() => void handleSendMessage()} aria-label={t('chatbot.button.sendAriaLabel')} disabled={isSending}>
                         {isSending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
                     </Button>
                 </div>

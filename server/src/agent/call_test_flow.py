@@ -16,29 +16,29 @@ logger = logging.getLogger(__name__)
 
 def build_minimal_plan(
     *,
-    phone_user: str,
     date: str = "2025-10-03",
     fishing_type: str = "선상",
     budget: str = "20만원",
     gear: str = "있음",
     transportation: str = "자차",
-    participants_adults: int = 2,
-    participants_children: int = 1,
+    participants: int = 3,
     target_species: str = "고등어",
     location: str = "구룡포",
 ) -> FishingPlanDetails:
+    """현재 PlannerAgent 의 FishingPlanDetails 스키마(단일 participants 필드)에 맞춘 최소 플랜 구성.
+
+    과거 participants_adults/children/total 필드는 제거됨. 테스트 목적상 participants 기본값 3 사용.
+    phone_user 는 현재 통화 플로우에서 직접 사용되지 않지만 레거시 호환을 위해 매개변수 유지.
+    """
     return FishingPlanDetails(
         date=date,
         fishing_type=fishing_type,
         budget=budget,
         gear=gear,
         transportation=transportation,
-        participants_adults=participants_adults,
-        participants_children=participants_children,
-        participants_total=participants_adults + participants_children,
+        participants=participants,
         target_species=target_species,
         location=location,
-        phone_user=phone_user,
     )
 
 
@@ -50,7 +50,7 @@ def run_call_flow(db: Session, *, shop_name: Optional[str] = None, simulate: boo
     """
     services = AgentServices(db)
     # 테스트 전용: 사용자 연락처는 더 이상 발신/수신 대상이 아니므로 placeholder 사용
-    plan = build_minimal_plan(phone_user="+10000000000")
+    plan = build_minimal_plan()
 
     # simulate=True 여도 이제는 실제 call 실행 로직을 그대로 태우되, Twilio 호출만 가짜로 대체
     original_start_call = services.start_reservation_call

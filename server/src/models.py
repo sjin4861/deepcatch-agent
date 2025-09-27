@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean, Text
+from sqlalchemy import Column, Integer, String, Boolean, Text, Float
 from .database import Base
 
 class Plan(Base):
@@ -17,6 +17,9 @@ class Business(Base):
     name = Column(String, unique=True, index=True)
     phone = Column(String, index=True)
     location = Column(String, index=True)
+    address = Column(String, nullable=True)
+    latitude = Column(Float, nullable=True)
+    longitude = Column(Float, nullable=True)
 
 class Reservation(Base):
     __tablename__ = "reservations"

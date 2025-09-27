@@ -40,6 +40,9 @@ class PlannerTool(BaseTool):
                 "stage": new_stage,
             }
         )
+        previous_stage = context.state.get("stage")
+        if new_stage == "ready" and previous_stage != "ready":
+            output.follow_up_actions.append("map_route_generation_api")
         output.add_tool_result(
             make_tool_result(
                 tool="planner_agent",
@@ -51,11 +54,6 @@ class PlannerTool(BaseTool):
                 },
             )
         )
-        # 계획이 모두 채워졌고 아직 전화 stage가 아니며 call action이 큐에 없다면 call 예약 액션 추가
-        if not result["missing"] and context.state.get('stage') not in ('calling','completed'):
-            existing_actions = context.state.get('action_queue', [])
-            if 'call' not in existing_actions:
-                output.add_follow_up_action('call')
         return output
 
     @staticmethod

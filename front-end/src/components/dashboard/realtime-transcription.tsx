@@ -1,15 +1,26 @@
 'use client';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Mic } from 'lucide-react';
+import { useLocale } from '@/context/locale-context';
 // 기존 context 기반 로직 + Socket 실시간 이벤트 통합
 import { useTranscription } from '@/context/transcription-context';
 import { useRealtimeConnection } from '@/hooks/useRealtimeConnection';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { localizeCallStatus } from '@/lib/call-status';
+import type { TranslationKey } from '@/locale/messages';
 
 const TYPING_INTERVAL_MS = 28;
+
+const SCENARIO_IDS = ['scenario1', 'scenario2', 'scenario3'] as const;
+
+const SCENARIO_TOGGLE_LABELS: Record<(typeof SCENARIO_IDS)[number], TranslationKey> = {
+    scenario1: 'transcription.scenarioToggle.scenario1',
+    scenario2: 'transcription.scenarioToggle.scenario2',
+    scenario3: 'transcription.scenarioToggle.scenario3',
+};
 
 export default function RealtimeTranscription() {
     const [dialing, setDialing] = useState(false);
@@ -32,6 +43,7 @@ export default function RealtimeTranscription() {
         scenarioProgress,
     } = useRealtimeConnection();
     const scrollAreaRef = useRef<HTMLDivElement>(null);
+    const { t } = useLocale();
     // 글자 단위 출력 상태: 각 conversation turn 별 현재 출력된 길이
     const [charProgress, setCharProgress] = useState<Record<string, number>>({});
     const progressRef = useRef<Record<string, number>>({});
@@ -156,13 +168,34 @@ export default function RealtimeTranscription() {
         return `${m}:${s.toString().padStart(2,'0')}`;
     };
 
+    const callStatusLabel = useMemo(() => {
+        if (!callStatus?.status) {
+            return null;
+        }
+        return localizeCallStatus(callStatus.status, t);
+    }, [callStatus, t]);
+
+    const scenarioProgressLabel = useMemo(() => {
+        if (!scenarioProgress) {
+            return null;
+        }
+        const statusKey: TranslationKey = scenarioProgress.is_complete
+            ? 'transcription.scenarioStatus.complete'
+            : 'transcription.scenarioStatus.inProgress';
+        return t('transcription.scenarioProgress', {
+            current: scenarioProgress.consumed,
+            total: scenarioProgress.total,
+            status: t(statusKey),
+        });
+    }, [scenarioProgress, t]);
+
     return (
         <Card className="flex-1 flex flex-col min-h-[400px]">
             <CardHeader className="flex flex-row items-center justify-between">
                 <CardTitle className="flex items-center gap-2">
                     <Mic className="text-accent" />
-                    Live Transcription
-                    {scenarioMode && <Badge variant="outline" className="text-[10px]">Scenario</Badge>}
+                    {t('transcription.title')}
+                    {scenarioMode && <Badge variant="outline" className="text-[10px]">{t('transcription.scenarioBadge')}</Badge>}
                 </CardTitle>
             </CardHeader>
             <CardContent className="flex-1 flex flex-col min-h-0">
@@ -170,30 +203,30 @@ export default function RealtimeTranscription() {
                     <div className="space-y-4">
                         {hasAttempted && !socketConnected && !error && (
                             <div className="flex items-center justify-center h-full text-muted-foreground">
-                                <p>Connecting to call service…</p>
+                                <p>{t('transcription.connecting')}</p>
                             </div>
                         )}
                         {isLoading && (
                             <div className="flex items-center justify-center h-full text-muted-foreground">
-                                <p>Dialing the charter…</p>
+                                <p>{t('transcription.dialing')}</p>
                             </div>
                         )}
                         {error && !isLoading && (
                             <div className="flex flex-col items-center justify-center gap-2 h-full text-destructive">
-                                <p>Unable to fetch transcription.</p>
+                                <p>{t('transcription.error')}</p>
                                 <button className="underline" onClick={() => refresh()}>
-                                    Retry
+                                    {t('transcription.retry')}
                                 </button>
                             </div>
                         )}
                         {showWaitingState && (
                             <div className="flex items-center justify-center h-full text-muted-foreground">
-                                <p>Waiting for the other party to pick up…</p>
+                                <p>{t('transcription.waiting')}</p>
                             </div>
                         )}
                         {showIdleState && (
                             <div className="flex items-center justify-center h-full text-muted-foreground">
-                                <p>Start a call to see the live conversation here.</p>
+                                <p>{t('transcription.idle')}</p>
                             </div>
                         )}
                         {!isLoading && !error && conversation.length > 0 && (
@@ -203,7 +236,7 @@ export default function RealtimeTranscription() {
                                 const isAssistant = turn.role === 'assistant';
                                 return (
                                     <div key={turn.id} className="flex flex-col">
-                                        <span className={`font-bold ${isAssistant ? 'text-primary' : 'text-foreground'}`}>{isAssistant ? 'Agent' : 'User'}</span>
+                                        <span className={`font-bold ${isAssistant ? 'text-primary' : 'text-foreground'}`}>{isAssistant ? t('transcription.agentLabel') : t('transcription.userLabel')}</span>
                                         <p className="text-muted-foreground whitespace-pre-wrap">
                                             {visible}
                                             {turn.isStreaming && shown >= visible.length && <span className="animate-pulse">▍</span>}
@@ -214,26 +247,26 @@ export default function RealtimeTranscription() {
                         )}
                         {/* 보조 패널 제거: conversation에 통합됨 */}
                         {callError && (
-                            <div className="text-xs text-destructive">Call Error: {callError}</div>
+                            <div className="text-xs text-destructive">{t('transcription.callError')}: {callError}</div>
                         )}
                     </div>
                 </ScrollArea>
                 <div className="mt-3 flex flex-wrap gap-2 justify-end">
                     {/* 시나리오 토글 */}
                     <div className="flex gap-1 items-center border rounded px-2 py-1 bg-muted/40">
-                        {(['scenario1','scenario2','scenario3'] as const).map(s => (
+                        {SCENARIO_IDS.map(id => (
                             <button
-                                key={s}
+                                key={id}
                                 type="button"
-                                onClick={()=>setScenarioId(s)}
-                                className={`text-[11px] px-2 py-0.5 rounded border transition-colors ${scenarioId===s ? 'bg-primary text-primary-foreground border-primary' : 'bg-background hover:bg-muted border-border'}`}
+                                onClick={()=>setScenarioId(id)}
+                                className={`text-[11px] px-2 py-0.5 rounded border transition-colors ${scenarioId===id ? 'bg-primary text-primary-foreground border-primary' : 'bg-background hover:bg-muted border-border'}`}
                             >
-                                {s.replace('scenario','S')}
+                                {t(SCENARIO_TOGGLE_LABELS[id])}
                             </button>
                         ))}
-                        {scenarioProgress && (
+                        {scenarioProgressLabel && (
                             <span className="ml-2 text-[10px] text-muted-foreground">
-                                {scenarioProgress.consumed}/{scenarioProgress.total}{scenarioProgress.is_complete && ' ✓'}
+                                {scenarioProgressLabel}
                             </span>
                         )}
                     </div>
@@ -257,41 +290,42 @@ export default function RealtimeTranscription() {
                                 });
                                 const data = await resp.json();
                                 if (!resp.ok) {
-                                    setDialError(data.message || 'Call initiate failed');
+                                    setDialError(data?.message ?? t('transcription.callInitiateFailed'));
                                 } else {
                                     setLastCallSid(data.call_sid || null);
                                 }
-                            } catch (e: any) {
-                                setDialError(e.message || 'Unknown error');
+                            } catch (e: unknown) {
+                                console.error('Failed to trigger test call', e);
+                                setDialError(t('transcription.unknownError'));
                             } finally {
                                 setDialing(false);
                             }
                         }}
                     >
-                        {dialing ? 'Dialing…' : 'Test Call'}
+                        {dialing ? t('transcription.dialingButton') : t('transcription.testCall')}
                     </Button>
                 </div>
                 {callStatus && (
-                    <div className="mt-2 text-[10px] text-muted-foreground">Twilio Status: {callStatus.status}</div>
+                    <div className="mt-2 text-[10px] text-muted-foreground">{t('transcription.twilioStatus')}: {callStatusLabel ?? localizeCallStatus(null, t)}</div>
                 )}
                 {/* 통화 진행 바 */}
                 <div className="mt-2">
                     <div className="w-full rounded border px-3 py-1.5 flex flex-wrap gap-3 items-center bg-muted/40">
-                        <span className="text-[11px] font-medium">{callStatus ? `Call: ${callStatus.status}` : 'Call: idle'}</span>
-                        <span className="text-[11px] text-muted-foreground">Elapsed: {callStartTime ? formatElapsed(elapsed) : '0:00'}</span>
+                        <span className="text-[11px] font-medium">{callStatusLabel ? `${t('transcription.callStatus')}: ${callStatusLabel}` : `${t('transcription.callStatus')}: ${t('transcription.callIdle')}`}</span>
+                        <span className="text-[11px] text-muted-foreground">{t('transcription.elapsed')}: {callStartTime ? formatElapsed(elapsed) : '0:00'}</span>
                         {callStatus?.data?.error_code && (
-                            <span className="text-[11px] text-destructive">Err: {callStatus.data.error_code}</span>
+                            <span className="text-[11px] text-destructive">{t('transcription.errorCode')}: {callStatus.data.error_code}</span>
                         )}
                         {!callStartTime && callStatus && (
-                            <span className="text-[11px] text-muted-foreground">Waiting answer…</span>
+                            <span className="text-[11px] text-muted-foreground">{t('transcription.waitingAnswer')}</span>
                         )}
                     </div>
                 </div>
                 {lastCallSid && (
-                    <div className="mt-1 text-[10px] text-muted-foreground">Call SID: {lastCallSid}</div>
+                    <div className="mt-1 text-[10px] text-muted-foreground">{t('transcription.callSid')}: {lastCallSid}</div>
                 )}
                 {dialError && (
-                    <div className="mt-1 text-[10px] text-destructive">Dial Error: {dialError}</div>
+                    <div className="mt-1 text-[10px] text-destructive">{t('transcription.dialError')}: {dialError}</div>
                 )}
             </CardContent>
         </Card>

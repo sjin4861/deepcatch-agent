@@ -7,15 +7,17 @@ import { Badge } from '@/components/ui/badge';
 import { Workflow, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useTranscription } from '@/context/transcription-context';
 import { useAgentInsights } from '@/context/agent-insights-context';
-import type { ToolResult } from '@/types/agent';
+import type { MapRouteMetadata, ToolResult } from '@/types/agent';
+import MapRoutePreview from './map-route-preview';
+import { useLocale } from '@/context/locale-context';
 
-function formatTimestamp(value: string | undefined) {
+function formatTimestamp(value: string | undefined, locale: string) {
     if (!value) return null;
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) {
         return null;
     }
-    return new Intl.DateTimeFormat(undefined, {
+    return new Intl.DateTimeFormat(locale || undefined, {
         hour: '2-digit',
         minute: '2-digit',
         second: '2-digit',
@@ -45,6 +47,7 @@ function renderMetadataValue(value: unknown): string {
 export default function InformationSummary() {
     const { isLoading, error, refresh, isActive, hasAttempted } = useTranscription();
     const { toolResults } = useAgentInsights();
+    const { t, locale } = useLocale();
     const [activeIndex, setActiveIndex] = useState(0);
     const previousCountRef = useRef(0);
 
@@ -69,11 +72,27 @@ export default function InformationSummary() {
         return toolResults[activeIndex] ?? null;
     }, [toolResults, activeIndex]);
 
+    const mapMetadata = useMemo(() => {
+        if (!activeResult?.metadata || typeof activeResult.metadata !== 'object') {
+            return null;
+        }
+        const mapValue = (activeResult.metadata as Record<string, unknown>).map;
+        if (
+            mapValue &&
+            typeof mapValue === 'object' &&
+            'departure' in mapValue &&
+            'arrival' in mapValue
+        ) {
+            return mapValue as MapRouteMetadata;
+        }
+        return null;
+    }, [activeResult]);
+
     const metadataEntries = useMemo(() => {
         if (!activeResult?.metadata || typeof activeResult.metadata !== 'object') {
             return [] as Array<[string, unknown]>;
         }
-        return Object.entries(activeResult.metadata);
+        return Object.entries(activeResult.metadata).filter(([key]) => key !== 'map');
     }, [activeResult]);
 
     const hasResults = toolResults.length > 0;
@@ -89,40 +108,51 @@ export default function InformationSummary() {
         setActiveIndex(index => Math.min(toolResults.length - 1, index + 1));
     };
 
+    const receivedAtLabel = useMemo(() => {
+        if (!activeResult) {
+            return null;
+        }
+        const formatted = formatTimestamp(activeResult.receivedAt, locale);
+        if (!formatted) {
+            return null;
+        }
+        return t('information.receivedAt', { time: formatted });
+    }, [activeResult, locale, t]);
+
     return (
         <Card>
             <CardHeader>
                 <CardTitle className="flex items-center gap-2">
                     <Workflow className="text-accent" />
-                    Agent Tool Insights
+                    {t('information.title')}
                 </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
                 {error && (
                     <div className="text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded-md p-3">
-                        Failed to load transcription stream.
+                        {t('information.error')}
                         {' '}
                         <button className="underline" onClick={() => refresh()}>
-                            Retry
+                            {t('information.retry')}
                         </button>
                     </div>
                 )}
 
                 {showIdleState && (
                     <p className="text-sm text-muted-foreground">
-                        Start a call to collect live insights. Any agent tool results will appear here as they are produced.
+                        {t('information.idle')}
                     </p>
                 )}
 
                 {showAwaitingState && (
                     <p className="text-sm text-muted-foreground">
-                        The agent is working. Tool results will appear here once the first tool completes.
+                        {t('information.awaiting')}
                     </p>
                 )}
 
                 {!isLoading && !error && !showIdleState && !hasResults && !showAwaitingState && (
                     <p className="text-sm text-muted-foreground">
-                        No tool results are available yet for this session.
+                        {t('information.empty')}
                     </p>
                 )}
 
@@ -147,28 +177,16 @@ export default function InformationSummary() {
                         </div>
 
                         <div className="space-y-3 rounded-2xl border border-border/60 bg-secondary/40 p-4">
-                            {formatTimestamp(activeResult.receivedAt) && (
+                            {receivedAtLabel && (
                                 <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                                    Received at {formatTimestamp(activeResult.receivedAt)}
+                                    {receivedAtLabel}
                                 </span>
                             )}
                             <p className="whitespace-pre-wrap text-sm leading-relaxed text-secondary-foreground">
                                 {activeResult.content}
                             </p>
-                            {metadataEntries.length > 0 && (
-                                <div className="rounded-xl border border-border/40 bg-background/80 p-3">
-                                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Details</p>
-                                    <dl className="mt-2 space-y-1 text-xs text-foreground/80">
-                                        {metadataEntries.map(([key, value]) => (
-                                            <div key={key} className="flex items-start justify-between gap-2">
-                                                <dt className="font-medium capitalize text-foreground/70">{key.replace(/_/g, ' ')}</dt>
-                                                <dd className="text-right text-foreground/80">
-                                                    {renderMetadataValue(value)}
-                                                </dd>
-                                            </div>
-                                        ))}
-                                    </dl>
-                                </div>
+                            {mapMetadata && (
+                                <MapRoutePreview metadata={mapMetadata} />
                             )}
                         </div>
 
@@ -180,7 +198,7 @@ export default function InformationSummary() {
                                 className="flex-1"
                             >
                                 <ChevronLeft className="mr-2 h-4 w-4" />
-                                Previous
+                                {t('information.previous')}
                             </Button>
                             <Button
                                 variant="outline"
@@ -188,7 +206,7 @@ export default function InformationSummary() {
                                 disabled={activeIndex >= toolResults.length - 1}
                                 className="flex-1"
                             >
-                                Next
+                                {t('information.next')}
                                 <ChevronRight className="ml-2 h-4 w-4" />
                             </Button>
                         </div>
