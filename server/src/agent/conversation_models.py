@@ -112,6 +112,7 @@ class CallSummary:
     status: str
     sid: Optional[str] = None
     message: Optional[str] = None
+    phone: Optional[str] = None  # 대상 업체 전화번호 (추가)
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -123,6 +124,8 @@ class CallSummary:
         ]
         if self.sid:
             lines.append(f"통화 SID: {self.sid}")
+        if self.phone:
+            lines.append(f"전화번호: {self.phone}")
         if self.message:
             lines.append(self.message)
         return make_tool_result(
