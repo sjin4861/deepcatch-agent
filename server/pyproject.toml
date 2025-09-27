@@ -14,4 +14,7 @@ dependencies = [
     "flask>=3.1.2",
     "python-dotenv>=1.1.1",
     "twilio>=9.8.1",
+    "langgraph>=0.2.24",
+    "langchain-core>=0.3.12",
+    "openai>=1.52.0",
 ]

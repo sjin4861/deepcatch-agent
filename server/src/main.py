@@ -5,8 +5,6 @@ from twilio.twiml.voice_response import VoiceResponse
 from twilio.rest import Client
 from pydantic import BaseModel, Field
 from typing import Optional, Dict, List
-from uuid import uuid4
-from datetime import datetime
 import os
 import logging
 from enum import Enum
@@ -17,6 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 # 지침에 따른 데이터베이스 연결
 from .database import get_db, engine
 from . import models, crud
+from .agent import ChatRequest, ChatResponse, PlanAgent
 
 # 로깅 설정
 logging.basicConfig(level=logging.INFO)
@@ -142,40 +141,6 @@ class Reservation(BaseModel):
     success: bool = Field(..., description="예약 성공 여부")
     business_name: str = Field(..., description="업체명")
     details: str = Field(..., description="세부 내용")
-
-
-class ChatToolResult(BaseModel):
-    """채팅 도우미 결과"""
-
-    id: str = Field(default_factory=lambda: str(uuid4()), description="결과 ID")
-    toolName: Optional[str] = Field(default=None, description="툴 이름")
-    title: Optional[str] = Field(default=None, description="결과 제목")
-    content: str = Field(..., description="결과 본문")
-    metadata: Optional[Dict] = Field(default=None, description="추가 메타데이터")
-    createdAt: str = Field(
-        default_factory=lambda: datetime.utcnow().isoformat(),
-        description="생성 시각",
-    )
-
-
-class ChatRequest(BaseModel):
-    """채팅 요청"""
-
-    message: str = Field(..., description="사용자 메시지")
-
-
-class ChatResponse(BaseModel):
-    """채팅 응답"""
-
-    message: str = Field(..., description="응답 메시지")
-    toolResults: List[ChatToolResult] = Field(
-        default_factory=list,
-        description="도우미 결과 목록",
-    )
-    callSuggested: bool = Field(
-        default=False,
-        description="전화 연결 제안 여부",
-    )
 
 
 class BusinessInfo(BaseModel):
@@ -320,6 +285,7 @@ class FishingCallHandler:
 
 
 fishing_handler = FishingCallHandler()
+plan_agent = PlanAgent()
 
 
 @app.post("/call/initiate", response_model=CallResponse)
@@ -853,71 +819,8 @@ async def chat_message(payload: ChatRequest, db: Session = Depends(get_db)):
     logger.info("채팅 메시지 수신: %s", message_text)
 
     try:
-        plan = crud.get_plan(db)
-
-        updates: Dict[str, str | int] = {}
-
-        if "날짜" in message_text or "일" in message_text:
-            if "내일" in message_text:
-                updates["date"] = "내일"
-            elif "오늘" in message_text:
-                updates["date"] = "오늘"
-
-        if "명" in message_text:
-            import re
-
-            numbers = re.findall(r"\d+", message_text)
-            if numbers:
-                try:
-                    updates["people"] = int(numbers[0])
-                except ValueError:
-                    logger.debug("인원수 파싱 실패: %s", numbers[0])
-
-        tool_results: List[ChatToolResult] = []
-
-        if updates:
-            plan = crud.update_plan_from_dict(db, plan, updates)
-            summary_lines = [
-                f"날짜: {plan.date}",
-                f"인원: {plan.people}명",
-                f"지역: {plan.location}",
-            ]
-            tool_results.append(
-                ChatToolResult(
-                    toolName="plan_tracker",
-                    title="여행 계획이 업데이트되었습니다",
-                    content="\n".join(summary_lines),
-                    metadata={"fieldsUpdated": list(updates.keys())},
-                )
-            )
-
-        missing_fields = crud.missing_fields(plan)
-
-        if missing_fields:
-            checklist = "\n".join(f"• {field}" for field in missing_fields)
-            tool_results.append(
-                ChatToolResult(
-                    toolName="information_checker",
-                    title="추가로 필요한 정보",
-                    content=checklist,
-                    metadata={"missing": missing_fields},
-                )
-            )
-            response_message = (
-                f"다음 정보를 알려주시면 정확한 예약을 도와드릴 수 있어요: {', '.join(missing_fields)}"
-            )
-            call_suggested = False
-        else:
-            response_message = (
-                "모든 준비가 완료되었습니다. 지금 낚시 배를 연결해볼까요?"
-            )
-            call_suggested = True
-
-        return ChatResponse(
-            message=response_message,
-            toolResults=tool_results,
-            callSuggested=call_suggested,
-        )
+        response = plan_agent(message=message_text, db=db)
+        return response
 
     except Exception as exc:
         logger.exception("채팅 처리 중 오류 발생")
