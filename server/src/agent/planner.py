@@ -25,7 +25,7 @@ class PlannerAgent:
     DEFAULT_PLAN_VALUES = {
         "time": "새벽 5시 ~ 오전 11시",
         "participants": 2,
-        "departure": "포항역 집결 04:00 출발",
+    "departure": "체인지업가든 포항",
         "fishing_type": "방파제 낚시",
         "budget": "1인당 150,000원 예상",
         "gear": "현장 대여 + 개인 장비 병행",
@@ -33,6 +33,30 @@ class PlannerAgent:
         "target_species": "가을철 어종(고등어·한치)",
     }
     DEFAULT_LOCATION = "구룡포"
+    AUTOFILL_KEYWORDS = [
+        "알아서",
+        "채워줘",
+        "채워 줘",
+        "대신 채워",
+        "대신 정해",
+        "추천해줘",
+        "추천 해줘",
+        "자동으로",
+        "기본값",
+        "기본 값",
+        "임의로",
+        "맡길게",
+        "맡겨",
+        "autofill",
+        "auto fill",
+        "fill it",
+        "fill in",
+        "fill the rest",
+        "complete it",
+        "choose for me",
+        "you decide",
+        "default it",
+    ]
     MISSING_ENUM = [
         "date",
         "participants",
@@ -152,9 +176,11 @@ class PlannerAgent:
         departure_updates = self._apply_departure_fallback(details, message)
         if departure_updates:
             db_updates.update(departure_updates)
-        default_db_updates, defaults_applied = self._apply_default_plan_fields(details, message)
-        if default_db_updates:
-            db_updates.update(default_db_updates)
+        defaults_applied = False
+        if self._user_requested_autofill(message):
+            default_db_updates, defaults_applied = self._apply_default_plan_fields(details, message)
+            if default_db_updates:
+                db_updates.update(default_db_updates)
         missing = self._normalize_missing(data.get("missing_information", []), details)
         summary_lines = self._ensure_summary(
             data.get("summary", []),
@@ -576,9 +602,11 @@ class PlannerAgent:
             details.departure = departure_value
             db_updates["departure"] = departure_value
 
-        default_db_updates, defaults_applied = self._apply_default_plan_fields(details, message)
-        if default_db_updates:
-            db_updates.update(default_db_updates)
+        defaults_applied = False
+        if self._user_requested_autofill(message):
+            default_db_updates, defaults_applied = self._apply_default_plan_fields(details, message)
+            if default_db_updates:
+                db_updates.update(default_db_updates)
 
         missing = details.missing_keys()
         summary_seed = self._summary_from_details(details)
@@ -595,6 +623,15 @@ class PlannerAgent:
             missing=missing,
             summary_lines=summary_lines,
         )
+
+    def _user_requested_autofill(self, message: str) -> bool:
+        if not message:
+            return False
+        lowered = message.lower()
+        for keyword in self.AUTOFILL_KEYWORDS:
+            if keyword in lowered or keyword in message:
+                return True
+        return False
 
     @staticmethod
     def _extract_first_match(patterns: List[str], message: str) -> Optional[str]:

@@ -22,6 +22,9 @@ class Business(BaseModel):
     name: str
     phone: str
     location: str
+    address: Optional[str] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
     class Config:
         orm_mode = True
 
