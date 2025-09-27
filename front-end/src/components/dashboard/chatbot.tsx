@@ -21,9 +21,9 @@ type Message = {
 };
 
 function resolveCallEndpoint() {
-    // if (API_BASE_URL) {
-    //     return `${API_BASE_URL.replace(/\/$/, '')}/call`;
-    // }
+    if (API_BASE_URL) {
+        return `${API_BASE_URL.replace(/\/$/, '')}/call`;
+    }
     return '/api/mock/call';
 }
 

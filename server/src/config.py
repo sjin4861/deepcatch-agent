@@ -54,6 +54,9 @@ class Settings(BaseSettings):
     scenario_id: str | None = None     # SCENARIO_ID
     scenario_auto_feed_all: bool = True  # SCENARIO_AUTO_FEED_ALL: True면 streaming 루프 한 번에 모든 assistant_lines 공급
     
+    # 외부 API 설정 
+    dpg_service_key: str | None = None  # DPG_SERVICE_KEY 
+    
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
