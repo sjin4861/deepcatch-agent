@@ -1,206 +1,200 @@
 'use client';
-
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Mic, Bot, AlertCircle } from 'lucide-react';
-import { useRealtimeConnection } from '@/hooks/useRealtimeConnection';
+import { Mic } from 'lucide-react';
+import { useTranscription } from '@/context/transcription-context';
+import type { TranscriptSegment } from '@/context/transcription-context';
 
-// 대화 기록 타입 정의
-interface ConversationEntry {
-  speaker: 'user' | 'ai';
-  text: string;
-  timestamp: string;
-  is_final: boolean;
-}
-
-// 화자별 스타일 설정
-const speakerDetails = {
-  user: {
-    name: 'Caller',
-    style: 'text-blue-600',
-    icon: Mic,
-  },
-  ai: {
-    name: 'AI Agent',
-    style: 'text-green-600',
-    icon: Bot,
-  },
-};
+const TYPING_INTERVAL_MS = 28;
 
 export default function RealtimeTranscription() {
-  // 실시간 연결 Hook 사용
-  const { 
-    isConnected, 
-    connectionError, 
-    transcription, 
-    aiResponse,
-    callStatus 
-  } = useRealtimeConnection();
-  
-  // 대화 기록 상태 관리
-  const [conversation, setConversation] = useState<ConversationEntry[]>([]);
-  const scrollAreaRef = useRef<HTMLDivElement>(null);
+    const { segments, isLoading, error, refresh, isActive, isConnected, hasAttempted } = useTranscription();
+    const scrollAreaRef = useRef<HTMLDivElement>(null);
+    const typingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+    const [displayedSegments, setDisplayedSegments] = useState<TranscriptSegment[]>([]);
+    const [segmentProgress, setSegmentProgress] = useState<number[]>([]);
+    const segmentProgressRef = useRef<number[]>([]);
+    const displayedSegmentsRef = useRef<TranscriptSegment[]>([]);
+    const pendingSegmentsRef = useRef<TranscriptSegment[]>([]);
+    const startNextSegmentRef = useRef<() => void>(() => {});
 
-  // 전사 결과가 업데이트될 때 대화 기록에 추가
-  useEffect(() => {
-    if (transcription && transcription.is_final) {
-      const newEntry: ConversationEntry = {
-        speaker: 'user',
-        text: transcription.text,
-        timestamp: transcription.timestamp,
-        is_final: true,
-      };
-      
-      setConversation(prev => [...prev, newEntry]);
-    }
-  }, [transcription]);
-
-  // AI 응답이 완료될 때 대화 기록에 추가
-  useEffect(() => {
-    if (aiResponse && aiResponse.trim()) {
-      // AI 응답 중복 방지를 위해 마지막 항목이 AI인지 확인
-      setConversation(prev => {
-        const lastEntry = prev[prev.length - 1];
-        if (lastEntry && lastEntry.speaker === 'ai') {
-          // 마지막 AI 응답 업데이트
-          return prev.map((entry, index) => 
-            index === prev.length - 1 
-              ? { ...entry, text: aiResponse }
-              : entry
-          );
-        } else {
-          // 새로운 AI 응답 추가
-          const newEntry: ConversationEntry = {
-            speaker: 'ai',
-            text: aiResponse,
-            timestamp: new Date().toISOString(),
-            is_final: true,
-          };
-          return [...prev, newEntry];
+    useEffect(() => {
+        if (scrollAreaRef.current) {
+            const viewport = scrollAreaRef.current.querySelector('div');
+            if (viewport) {
+                viewport.scrollTop = viewport.scrollHeight;
+            }
         }
-      });
-    }
-  }, [aiResponse]);
+    }, [displayedSegments.length, segmentProgress]);
 
-  // 자동 스크롤
-  useEffect(() => {
-    if (scrollAreaRef.current) {
-      const viewport = scrollAreaRef.current.querySelector('div');
-      if (viewport) {
-        viewport.scrollTop = viewport.scrollHeight;
-      }
-    }
-  }, [conversation, transcription]);
+    useEffect(() => {
+        displayedSegmentsRef.current = displayedSegments;
+    }, [displayedSegments]);
 
-  // 상태 메시지 렌더링
-  const renderStatus = () => {
-    if (connectionError) {
-      return (
-        <div className="flex items-center justify-center h-full text-red-500">
-          <AlertCircle className="w-5 h-5 mr-2" />
-          <p>연결 오류: {connectionError}</p>
-        </div>
-      );
-    }
-    
-    if (!isConnected) {
-      return (
-        <div className="flex items-center justify-center h-full text-muted-foreground">
-          <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-gray-900 mr-2"></div>
-          <p>실시간 서버에 연결 중...</p>
-        </div>
-      );
-    }
-    
-    if (!callStatus || callStatus.status === 'initiated') {
-      return (
-        <div className="flex items-center justify-center h-full text-muted-foreground">
-          <p>통화 시작을 기다리는 중...</p>
-        </div>
-      );
-    }
-    
-    if (conversation.length === 0) {
-      return (
-        <div className="flex items-center justify-center h-full text-muted-foreground">
-          <p>대화 내용이 여기에 실시간으로 표시됩니다...</p>
-        </div>
-      );
-    }
-    
-    return null;
-  };
+    useEffect(() => {
+        segmentProgressRef.current = segmentProgress;
+    }, [segmentProgress]);
 
-  const status = renderStatus();
+    const stopTyping = useCallback(() => {
+        if (typingTimerRef.current) {
+            clearInterval(typingTimerRef.current);
+            typingTimerRef.current = null;
+        }
+    }, []);
 
-  return (
-    <Card className="flex-1 flex flex-col min-h-[400px]">
-      <CardHeader className="flex flex-row items-center justify-between">
-        <CardTitle className="flex items-center gap-2">
-          <Mic className="text-accent" />
-          실시간 전사
-        </CardTitle>
-        <div className="flex items-center gap-2">
-          <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-green-500' : 'bg-red-500'}`}></div>
-          <span className="text-sm text-muted-foreground">
-            {isConnected ? '연결됨' : '연결 해제됨'}
-          </span>
-          {callStatus && (
-            <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">
-              {callStatus.status}
-            </span>
-          )}
-        </div>
-      </CardHeader>
-      <CardContent className="flex-1 flex flex-col min-h-0">
-        <ScrollArea className="flex-1 pr-4 -mr-4" ref={scrollAreaRef}>
-          <div className="space-y-4">
-            {status ? (
-              status
-            ) : (
-              <>
-                {/* 확정된 대화 기록 */}
-                {conversation.map((entry, index) => {
-                  const SpeakerIcon = speakerDetails[entry.speaker].icon;
-                  return (
-                    <div key={index} className="flex flex-col space-y-1">
-                      <div className="flex items-center gap-2">
-                        <SpeakerIcon className="w-4 h-4" />
-                        <span className={`font-medium ${speakerDetails[entry.speaker].style}`}>
-                          {speakerDetails[entry.speaker].name}
-                        </span>
-                        <span className="text-xs text-muted-foreground">
-                          {new Date(entry.timestamp).toLocaleTimeString()}
-                        </span>
-                      </div>
-                      <p className="text-foreground pl-6 whitespace-pre-wrap">
-                        {entry.text}
-                      </p>
+    const runTick = useCallback(() => {
+        let shouldStartNext = false;
+
+        setSegmentProgress(prev => {
+            if (prev.length === 0) {
+                stopTyping();
+                return prev;
+            }
+
+            const next = [...prev];
+            const lastIndex = next.length - 1;
+            const currentSegment = displayedSegmentsRef.current[lastIndex];
+
+            if (!currentSegment) {
+                return prev;
+            }
+
+            const targetLength = currentSegment.text.length;
+            if (next[lastIndex] < targetLength) {
+                next[lastIndex] = Math.min(next[lastIndex] + 1, targetLength);
+                return next;
+            }
+
+            shouldStartNext = true;
+            return prev;
+        });
+
+        if (shouldStartNext) {
+            if (pendingSegmentsRef.current.length > 0) {
+                startNextSegmentRef.current();
+            } else {
+                stopTyping();
+            }
+        }
+    }, [stopTyping]);
+
+    const ensureTimer = useCallback(() => {
+        if (!typingTimerRef.current) {
+            typingTimerRef.current = setInterval(runTick, TYPING_INTERVAL_MS);
+        }
+    }, [runTick]);
+
+    const startNextSegment = useCallback(() => {
+        if (pendingSegmentsRef.current.length === 0) {
+            return;
+        }
+
+        const segmentsList = displayedSegmentsRef.current;
+        const progressList = segmentProgressRef.current;
+
+        if (segmentsList.length > 0) {
+            const lastIndex = segmentsList.length - 1;
+            const lastSegment = segmentsList[lastIndex];
+            const lastProgress = progressList[lastIndex] ?? 0;
+
+            if (lastSegment && lastProgress < lastSegment.text.length) {
+                return;
+            }
+        }
+
+        const nextSegment = pendingSegmentsRef.current.shift();
+        if (!nextSegment) {
+            return;
+        }
+
+        setDisplayedSegments(prev => [...prev, nextSegment]);
+        setSegmentProgress(prev => [...prev, 0]);
+        ensureTimer();
+    }, [ensureTimer]);
+
+    useEffect(() => {
+        startNextSegmentRef.current = startNextSegment;
+    }, [startNextSegment]);
+
+    useEffect(() => {
+        if (segments.length === 0) {
+            pendingSegmentsRef.current = [];
+            setDisplayedSegments([]);
+            setSegmentProgress([]);
+            stopTyping();
+            return;
+        }
+
+        const knownCount = displayedSegmentsRef.current.length + pendingSegmentsRef.current.length;
+        if (segments.length > knownCount) {
+            const newSegments = segments.slice(knownCount);
+            pendingSegmentsRef.current.push(...newSegments);
+            startNextSegment();
+        }
+    }, [segments, startNextSegment, stopTyping]);
+
+    useEffect(() => () => stopTyping(), [stopTyping]);
+
+    const showIdleState = !isActive && segments.length === 0 && !isLoading && !error;
+    const showWaitingState = isActive && !isLoading && !error && segments.length === 0;
+
+    return (
+        <Card className="flex-1 flex flex-col min-h-[400px]">
+            <CardHeader className="flex flex-row items-center justify-between">
+                <CardTitle className="flex items-center gap-2">
+                    <Mic className="text-accent" />
+                    Live Transcription
+                </CardTitle>
+            </CardHeader>
+            <CardContent className="flex-1 flex flex-col min-h-0">
+                <ScrollArea className="flex-1 pr-4 -mr-4" ref={scrollAreaRef}>
+                    <div className="space-y-4">
+                        {hasAttempted && !isConnected && !error && (
+                            <div className="flex items-center justify-center h-full text-muted-foreground">
+                                <p>Connecting to call service…</p>
+                            </div>
+                        )}
+                        {isLoading && (
+                            <div className="flex items-center justify-center h-full text-muted-foreground">
+                                <p>Dialing the charter…</p>
+                            </div>
+                        )}
+                        {error && !isLoading && (
+                            <div className="flex flex-col items-center justify-center gap-2 h-full text-destructive">
+                                <p>Unable to fetch transcription.</p>
+                                <button className="underline" onClick={() => refresh()}>
+                                    Retry
+                                </button>
+                            </div>
+                        )}
+                        {showWaitingState && (
+                            <div className="flex items-center justify-center h-full text-muted-foreground">
+                                <p>Waiting for the other party to pick up…</p>
+                            </div>
+                        )}
+                        {showIdleState && (
+                            <div className="flex items-center justify-center h-full text-muted-foreground">
+                                <p>Start a call to see the live conversation here.</p>
+                            </div>
+                        )}
+                        {!isLoading && !error && displayedSegments.length > 0 && (
+                            displayedSegments.map((line, index) => {
+                                const visibleLength = Math.min(segmentProgress[index] ?? line.text.length, line.text.length);
+                                const visibleText = line.text.slice(0, visibleLength);
+                                return (
+                                    <div key={`${line.speaker}-${index}`} className="flex flex-col">
+                                        <span className={`font-bold ${line.speaker.toLowerCase() === 'agent' ? 'text-primary' : 'text-foreground'}`}>
+                                            {line.speaker}
+                                        </span>
+                                        <p className="text-muted-foreground whitespace-pre-wrap">{visibleText}</p>
+                                    </div>
+                                );
+                            })
+                        )}
                     </div>
-                  );
-                })}
-                
-                {/* 실시간 전사 진행 중 (임시) */}
-                {transcription && !transcription.is_final && (
-                  <div className="flex flex-col space-y-1 opacity-70">
-                    <div className="flex items-center gap-2">
-                      <Mic className="w-4 h-4" />
-                      <span className="font-medium text-blue-600">
-                        Caller (실시간)
-                      </span>
-                      <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></div>
-                    </div>
-                    <p className="text-foreground pl-6 italic">
-                      {transcription.text}
-                    </p>
-                  </div>
-                )}
-              </>
-            )}
-          </div>
-        </ScrollArea>
-      </CardContent>
-    </Card>
-  );
+                </ScrollArea>
+            </CardContent>
+        </Card>
+    );
 }

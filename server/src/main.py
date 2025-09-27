@@ -1,5 +1,4 @@
-# twilio_voice_handler.py
-
+# main.py - 낚시 예약 AI 에이전트
 from fastapi import FastAPI, Request, Form, HTTPException, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from twilio.twiml.voice_response import VoiceResponse, Gather
@@ -15,8 +14,9 @@ import openai
 from src.realtime_server import sio
 
 load_dotenv()
-URL = os.getenv("TWILIO_WEBHOOK_URL")
+URL = os.getenv("URL", "http://localhost:8000")  # 기본값 설정
 US_PHONENUMBER = os.getenv("US_PHONENUMBER")
+KO_PHONENUMBER = os.getenv("KO_PHONENUMBER")
 
 app = FastAPI(
     title="낚시 예약 AI 에이전트",
@@ -119,6 +119,7 @@ async def process_speech(request: Request):
             # 만약을 대비한 초기화
             conversation_history[call_sid] = [{"role": "system", "content": "당신은 친절한 AI 전화 상담원입니다. 한국어로 간결하고 명확하게 답변해주세요."},
                                               {"role": "user", "content": user_speech}]
+
         
         try:
             # OpenAI LLM 호출
@@ -167,9 +168,9 @@ async def voice_status_callback(request: Request):
     form = await request.form()
     call_sid = form.get('CallSid')
     call_status = form.get('CallStatus')
+
     
     logger.info(f"통화 상태 업데이트 (SID: {call_sid}): {call_status}")
-
     # 통화 종료 상태 목록
     final_statuses = ['completed', 'busy', 'failed', 'no-answer', 'canceled']
 
@@ -194,3 +195,4 @@ app.mount("/socket.io", socket_app)
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
+
