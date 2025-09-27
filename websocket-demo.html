@@ -1,0 +1,657 @@
+<!DOCTYPE html>
+<html lang="ko">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<title>WebSocket Test Demo</title>
+		<style>
+			* {
+				margin: 0;
+				padding: 0;
+				box-sizing: border-box;
+			}
+
+			body {
+				font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+				background-color: #f8f6f3; /* dawn-mist */
+				color: #5a6b5d; /* ocean-deep text */
+				line-height: 1.6;
+				padding: 20px;
+			}
+
+			.container {
+				max-width: 800px;
+				margin: 0 auto;
+				background-color: white;
+				border-radius: 12px;
+				box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+				overflow: hidden;
+			}
+
+			.header {
+				background-color: #4a6741; /* ocean-deep */
+				color: white;
+				padding: 20px;
+				text-align: center;
+			}
+
+			.content {
+				padding: 30px;
+			}
+
+			.connection-section {
+				background-color: #f8f6f3; /* dawn-mist */
+				padding: 20px;
+				border-radius: 8px;
+				margin-bottom: 20px;
+			}
+
+			.input-group {
+				margin-bottom: 15px;
+			}
+
+			label {
+				display: block;
+				margin-bottom: 5px;
+				font-weight: 600;
+				color: #756b5e; /* weathered-wood text */
+			}
+
+			input,
+			textarea {
+				width: 100%;
+				padding: 12px;
+				border: 2px solid #a8b8aa; /* sea-foam */
+				border-radius: 6px;
+				font-size: 14px;
+				transition: border-color 0.3s;
+			}
+
+			input:focus,
+			textarea:focus {
+				outline: none;
+				border-color: #4a6741; /* ocean-deep */
+			}
+
+			.button-group {
+				display: flex;
+				gap: 10px;
+				margin-bottom: 20px;
+				flex-wrap: wrap;
+			}
+
+			button {
+				padding: 12px 24px;
+				border: none;
+				border-radius: 6px;
+				font-size: 14px;
+				font-weight: 600;
+				cursor: pointer;
+				transition: background-color 0.3s;
+			}
+
+			.btn-connect {
+				background-color: #a8b8aa; /* sea-foam */
+				color: white;
+			}
+
+			.btn-connect:hover {
+				background-color: #6b7b6e; /* fishing-net */
+			}
+
+			.btn-disconnect {
+				background-color: #d4a574; /* sunrise-glow */
+				color: white;
+			}
+
+			.btn-disconnect:hover {
+				background-color: #9a8a7b; /* harbor-stone */
+			}
+
+			.btn-send {
+				background-color: #4a6741; /* ocean-deep */
+				color: white;
+			}
+
+			.btn-send:hover {
+				background-color: #5a6b5d; /* ocean-deep text */
+			}
+
+			.btn-clear {
+				background-color: #8a7a6b; /* weathered-wood */
+				color: white;
+			}
+
+			.btn-clear:hover {
+				background-color: #756b5e; /* weathered-wood text */
+			}
+
+			.btn-record {
+				background-color: #6b7b6e; /* fishing-net */
+				color: white;
+			}
+
+			.btn-record:hover {
+				background-color: #5f6f62; /* fishing-net text */
+			}
+
+			.btn-record.recording {
+				background-color: #d4a574; /* sunrise-glow */
+				animation: pulse 1.5s infinite;
+			}
+
+			.btn-live-stt {
+				background-color: #9a8a7b; /* harbor-stone */
+				color: white;
+			}
+
+			.btn-live-stt:hover {
+				background-color: #8a7a6b; /* weathered-wood */
+			}
+
+			.btn-live-stt.active {
+				background-color: #d4a574; /* sunrise-glow */
+				animation: pulse 1.5s infinite;
+			}
+
+			@keyframes pulse {
+				0% {
+					opacity: 1;
+				}
+				50% {
+					opacity: 0.5;
+				}
+				100% {
+					opacity: 1;
+				}
+			}
+
+			.twilio-section {
+				background-color: #f8f6f3; /* dawn-mist */
+				padding: 20px;
+				border-radius: 8px;
+				margin-bottom: 20px;
+			}
+
+			.audio-section {
+				background-color: #f8f6f3; /* dawn-mist */
+				padding: 15px;
+				border-radius: 8px;
+				margin-top: 15px;
+			}
+
+			.audio-status {
+				padding: 8px 12px;
+				border-radius: 4px;
+				font-size: 13px;
+				margin-top: 10px;
+				background-color: #a8b8aa; /* sea-foam */
+				color: white;
+				text-align: center;
+			}
+
+			.call-status {
+				padding: 10px 15px;
+				border-radius: 6px;
+				font-size: 14px;
+				margin-top: 15px;
+				background-color: #6b7b6e; /* fishing-net */
+				color: white;
+				text-align: center;
+				font-weight: 600;
+			}
+
+			.call-status.calling {
+				background-color: #d4a574; /* sunrise-glow */
+				animation: pulse 1.5s infinite;
+			}
+
+			.call-status.connected {
+				background-color: #a8b8aa; /* sea-foam */
+			}
+
+			.call-status.disconnected {
+				background-color: #8a7a6b; /* weathered-wood */
+			}
+
+			.btn-call {
+				background-color: #a8b8aa; /* sea-foam */
+				color: white;
+			}
+
+			.btn-call:hover {
+				background-color: #6b7b6e; /* fishing-net */
+			}
+
+			.btn-call:disabled {
+				background-color: #9a8a7b; /* harbor-stone */
+				cursor: not-allowed;
+			}
+
+			.btn-hangup {
+				background-color: #d4a574; /* sunrise-glow */
+				color: white;
+			}
+
+			.btn-hangup:hover {
+				background-color: #9a8a7b; /* harbor-stone */
+			}
+
+			.btn-hangup:disabled {
+				background-color: #8a7a6b; /* weathered-wood */
+				cursor: not-allowed;
+			}
+
+			.status {
+				padding: 10px;
+				border-radius: 6px;
+				margin-bottom: 20px;
+				font-weight: 600;
+			}
+
+			.status.connected {
+				background-color: #a8b8aa; /* sea-foam */
+				color: white;
+			}
+
+			.status.disconnected {
+				background-color: #d4a574; /* sunrise-glow */
+				color: white;
+			}
+
+			.status.error {
+				background-color: #d4a574; /* sunrise-glow */
+				color: white;
+			}
+
+			.messages-section {
+				background-color: #f8f6f3; /* dawn-mist */
+				padding: 20px;
+				border-radius: 8px;
+				margin-bottom: 20px;
+			}
+
+			.messages {
+				height: 300px;
+				overflow-y: auto;
+				border: 2px solid #a8b8aa; /* sea-foam */
+				border-radius: 6px;
+				padding: 15px;
+				background-color: white;
+				font-family: "Courier New", monospace;
+				font-size: 13px;
+			}
+
+			.message {
+				margin-bottom: 8px;
+				padding: 8px;
+				border-radius: 4px;
+			}
+
+			.message.sent {
+				background-color: #d4c4a8; /* warm-sand */
+				text-align: right;
+			}
+
+			.message.received {
+				background-color: #a8b8aa; /* sea-foam */
+				color: white;
+			}
+
+			.message.stt {
+				background-color: #e0e8e3; /* A lighter, neutral green */
+				color: #333;
+			}
+
+			.message.system {
+				background-color: #f8f6f3; /* dawn-mist */
+				font-style: italic;
+				color: #756b5e; /* weathered-wood text */
+			}
+
+			.timestamp {
+				font-size: 11px;
+				opacity: 0.7;
+			}
+		</style>
+		<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+	</head>
+	<body>
+		<div class="container">
+			<div class="header">
+				<h1>🌊 WebSocket Test Demo</h1>
+				<p>실시간 연결 테스트 페이지</p>
+			</div>
+
+			<div class="content">
+				<div class="connection-section">
+					<h3>연결 설정</h3>
+					<div class="input-group">
+						<label for="socketUrl">Socket.IO URL:</label>
+						<input
+							type="text"
+							id="socketUrl"
+							value="http://localhost:8000"
+							placeholder="http://localhost:8000"
+						/>
+					</div>
+
+					<div class="button-group">
+						<button class="btn-connect" onclick="connect()">
+							연결
+						</button>
+						<button class="btn-disconnect" onclick="disconnect()">
+							연결 해제
+						</button>
+					</div>
+
+					<div id="status" class="status disconnected">연결 끊김</div>
+				</div>
+
+				<div class="twilio-section">
+					<h3>📞 Twilio 전화 통화</h3>
+
+					<div class="input-group">
+						<label for="phoneNumber">전화번호 (E.164 형식):</label>
+						<input
+							type="text"
+							id="phoneNumber"
+							placeholder="+821021139911"
+							value="+821021139911"
+						/>
+					</div>
+
+					<div class="button-group">
+						<button
+							id="callBtn"
+							class="btn-call"
+							onclick="initiateCall()"
+						>
+							📞 전화 걸기
+						</button>
+						<button
+							id="hangupBtn"
+							class="btn-hangup"
+							onclick="hangupCall()"
+						>
+							📴 전화 끊기
+						</button>
+					</div>
+
+					<div id="callStatus" class="call-status">📞 대기 중</div>
+				</div>
+
+				<div class="messages-section">
+					<h3>📝 실시간 대화</h3>
+					<div id="messages" class="messages"></div>
+
+					<div class="input-group">
+						<label for="messageInput"
+							>메시지 입력 (참고: 이 기능은 현재 비활성화되어
+							있습니다):</label
+						>
+						<textarea
+							id="messageInput"
+							rows="3"
+							placeholder="전송할 메시지를 입력하세요..."
+							disabled
+						></textarea>
+					</div>
+
+					<div class="button-group">
+						<button
+							class="btn-send"
+							onclick="sendMessage()"
+							disabled
+						>
+							전송
+						</button>
+						<button
+							id="recordBtn"
+							class="btn-record"
+							onclick="toggleRecording()"
+							disabled
+						>
+							🎤 녹음 시작
+						</button>
+						<button
+							id="liveSTTBtn"
+							class="btn-live-stt"
+							onclick="toggleLiveSTT()"
+							disabled
+						>
+							🎙️ 실시간 STT
+						</button>
+						<button class="btn-clear" onclick="clearMessages()">
+							메시지 지우기
+						</button>
+					</div>
+				</div>
+			</div>
+		</div>
+
+		<script>
+			let socket = null
+			let callSid = null
+			const statusDiv = document.getElementById("status")
+			const messagesDiv = document.getElementById("messages")
+			const messageInput = document.getElementById("messageInput")
+			const socketUrlInput = document.getElementById("socketUrl")
+			const phoneNumberInput = document.getElementById("phoneNumber")
+			const callStatusDiv = document.getElementById("callStatus")
+			const callBtn = document.getElementById("callBtn")
+			const hangupBtn = document.getElementById("hangupBtn")
+
+			function connect() {
+				const url = socketUrlInput.value.trim()
+				if (!url) {
+					addMessage("URL을 입력해주세요.", "system")
+					return
+				}
+
+				if (socket) {
+					addMessage("이미 연결되어 있습니다.", "system")
+					return
+				}
+
+				try {
+					socket = io(url, {
+						transports: ["websocket", "polling"],
+					})
+
+					socket.on("connect", () => {
+						updateStatus("연결됨", "connected")
+						addMessage(
+							`Socket.IO 연결 성공 (ID: ${socket.id})`,
+							"system"
+						)
+					})
+
+					socket.on("disconnect", (reason) => {
+						updateStatus("연결 끊김", "disconnected")
+						addMessage(
+							`연결이 종료되었습니다. (이유: ${reason})`,
+							"system"
+						)
+						socket = null
+						resetCallState()
+					})
+
+					socket.on("connect_error", (error) => {
+						updateStatus("연결 오류", "error")
+						addMessage(`연결 오류: ${error.message}`, "system")
+						socket = null
+					})
+
+					// --- 신규 백엔드 이벤트 핸들러 ---
+
+					// 통화 종료 처리
+					socket.on("call_ended", (data) => {
+						addMessage(`통화가 종료되었습니다. (SID: ${data.call_sid})`, "system")
+						resetCallState()
+					})
+
+					// Twilio <Gather>로 인식된 사용자 발화 표시
+					socket.on("user_speech", (data) => {
+						addMessage(`[사용자] ${data.text}`, "stt")
+					})
+
+					// AI 응답 표시
+					socket.on("ai_response", (data) => {
+						addMessage(`[AI] ${data.text}`, "received")
+					})
+				} catch (error) {
+					updateStatus("연결 오류", "error")
+					addMessage(`연결 실패: ${error.message}`, "system")
+				}
+			}
+
+			function disconnect() {
+				if (socket) {
+					socket.disconnect()
+				}
+				resetCallState()
+			}
+
+			function handleTranscriptionUpdate(text, isFinal) {
+				const prefix = "[STT]"
+				let tempMsg = document.getElementById("temp-stt")
+
+				if (isFinal) {
+					const finalHtml = `<div>${prefix} ${text}</div><div class="timestamp">${new Date().toLocaleTimeString()}</div>`
+					if (tempMsg) {
+						tempMsg.innerHTML = finalHtml
+						tempMsg.id = ""
+					} else {
+						addMessage(finalHtml, "stt", false)
+					}
+				} else {
+					if (!tempMsg) {
+						const messageDiv = document.createElement("div")
+						messageDiv.className = "message stt"
+						messageDiv.id = "temp-stt"
+						messagesDiv.appendChild(messageDiv)
+						tempMsg = messageDiv
+					}
+					tempMsg.innerHTML = `<div>${prefix} ${text}...</div><div class="timestamp">${new Date().toLocaleTimeString()}</div>`
+					messagesDiv.scrollTop = messagesDiv.scrollHeight
+				}
+			}
+
+			function clearMessages() {
+				messagesDiv.innerHTML = ""
+			}
+
+			function updateStatus(text, className) {
+				statusDiv.textContent = text
+				statusDiv.className = `status ${className}`
+			}
+
+			function updateCallStatus(text, status) {
+				callStatusDiv.textContent = text
+				callStatusDiv.className = `call-status ${status}`
+			}
+
+			function addMessage(text, type, useDiv = true) {
+				const messageDiv = document.createElement("div")
+				messageDiv.className = `message ${type}`
+
+				if (useDiv) {
+					const timestamp = new Date().toLocaleTimeString()
+					messageDiv.innerHTML = `
+                    <div>${text}</div>
+                    <div class="timestamp">${timestamp}</div>
+                `
+				} else {
+					messageDiv.innerHTML = text
+				}
+
+				messagesDiv.appendChild(messageDiv)
+				messagesDiv.scrollTop = messagesDiv.scrollHeight
+			}
+
+			function resetCallState() {
+				callBtn.disabled = false
+				hangupBtn.disabled = true
+				callSid = null
+				updateCallStatus("📞 대기 중", "")
+			}
+
+			window.onload = () => {
+				addMessage(
+					'Socket.IO 테스트 데모에 오신 것을 환영합니다! "연결" 버튼을 눌러 서버와 연결하세요.',
+					"system"
+				)
+				addMessage(
+					"서버 연결 후, 전화번호를 입력하고 📞 버튼을 눌러 통화를 시작할 수 있습니다.",
+					"system"
+				)
+				resetCallState()
+			}
+
+			async function initiateCall() {
+				const phoneNumber = phoneNumberInput.value.trim()
+				if (!phoneNumber) {
+					addMessage("전화번호를 입력해주세요.", "system")
+					return
+				}
+
+				if (!socket || !socket.connected) {
+					addMessage("먼저 Socket.IO 서버에 연결해야 합니다.", "system")
+					return
+				}
+
+				callBtn.disabled = true
+				hangupBtn.disabled = false
+				updateCallStatus("🤙 전화 거는 중...", "calling")
+
+				try {
+					const serverUrl = new URL(socketUrlInput.value)
+					const apiUrl = `${serverUrl.origin}/call/initiate`
+
+					const response = await fetch(apiUrl, {
+						method: "POST",
+						headers: {
+							"Content-Type": "application/json",
+						},
+						body: JSON.stringify({ to_number: phoneNumber }),
+					})
+
+					if (!response.ok) {
+						let errorMessage = "전화 걸기에 실패했습니다.";
+						try {
+							const errorData = await response.json();
+							errorMessage = errorData.detail || JSON.stringify(errorData);
+						} catch (e) {
+							errorMessage = await response.text();
+						}
+						throw new Error(errorMessage);
+					}
+
+					const data = await response.json()
+					callSid = data.call_sid
+					addMessage(`전화 연결 시작 (SID: ${callSid})`, "system")
+					updateCallStatus("🔔 통화 연결됨", "connected")
+				} catch (error) {
+					addMessage(`오류: ${error.message}`, "system")
+					resetCallState()
+				}
+			}
+
+			function hangupCall() {
+				addMessage("사용자가 직접 전화를 끊으면 자동으로 감지됩니다.", "system")
+			}
+
+			// 아래 함수들은 현재 백엔드와 호환되지 않으므로 비활성화되었습니다.
+			function sendMessage() {
+				console.warn("sendMessage 기능은 현재 비활성화되었습니다.")
+			}
+			function toggleRecording() {
+				console.warn("toggleRecording 기능은 현재 비활성화되었습니다.")
+			}
+			function toggleLiveSTT() {
+				console.warn("toggleLiveSTT 기능은 현재 비활성화되었습니다.")
+			}
+		</script>
+	</body>
+</html>

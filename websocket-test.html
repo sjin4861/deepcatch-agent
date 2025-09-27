@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebSocket 연결 테스트</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+        }
+        .container {
+            background-color: #f5f5f5;
+            padding: 20px;
+            border-radius: 8px;
+        }
+        input, button {
+            padding: 10px;
+            margin: 5px;
+            font-size: 14px;
+        }
+        .log {
+            background-color: #000;
+            color: #0f0;
+            padding: 15px;
+            height: 300px;
+            overflow-y: auto;
+            font-family: monospace;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔌 WebSocket 연결 테스트</h1>
+        
+        <div>
+            <label>WebSocket URL:</label><br>
+            <input type="text" id="wsUrl" style="width: 500px;" 
+                   value="wss://pityingly-overwily-dawna.ngrok-free.dev/voice/stream?call_sid=test_123">
+        </div>
+        
+        <div style="margin-top: 10px;">
+            <button onclick="testConnection()">연결 테스트</button>
+            <button onclick="clearLog()">로그 지우기</button>
+        </div>
+        
+        <div id="log" class="log"></div>
+    </div>
+
+    <script>
+        let ws = null;
+        
+        function log(message) {
+            const logDiv = document.getElementById('log');
+            const timestamp = new Date().toLocaleTimeString();
+            logDiv.innerHTML += `[${timestamp}] ${message}\n`;
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+        
+        function clearLog() {
+            document.getElementById('log').innerHTML = '';
+        }
+        
+        function testConnection() {
+            const url = document.getElementById('wsUrl').value;
+            
+            if (ws) {
+                ws.close();
+                ws = null;
+            }
+            
+            log(`연결 시도: ${url}`);
+            
+            try {
+                ws = new WebSocket(url);
+                
+                ws.onopen = function(event) {
+                    log('✅ WebSocket 연결 성공!');
+                };
+                
+                ws.onmessage = function(event) {
+                    log(`📨 메시지 수신: ${event.data}`);
+                };
+                
+                ws.onclose = function(event) {
+                    log(`❌ 연결 종료: 코드=${event.code}, 이유=${event.reason || '없음'}`);
+                };
+                
+                ws.onerror = function(error) {
+                    log(`🚨 WebSocket 오류 발생`);
+                };
+                
+            } catch (error) {
+                log(`🚨 연결 실패: ${error.message}`);
+            }
+        }
+        
+        // 페이지 로드 시 자동 테스트
+        log('WebSocket 테스트 페이지 로드됨');
+        log('위 URL이 정확한지 확인하고 "연결 테스트" 버튼을 누르세요');
+    </script>
+</body>
+</html>
