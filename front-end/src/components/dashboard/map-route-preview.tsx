@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { MapRouteMetadata } from '@/types/agent';
+import type { TranslationKey } from '@/locale/messages';
+import { useLocale } from '@/context/locale-context';
 
 declare global {
     interface Window {
@@ -16,29 +18,46 @@ type MapRoutePreviewProps = {
     metadata: MapRouteMetadata;
 };
 
-function formatDuration(minutes: number | undefined | null) {
+type TranslateFn = (key: TranslationKey, values?: Record<string, string | number | undefined | null>) => string;
+
+function formatDuration(
+    minutes: number | undefined | null,
+    locale: string,
+    t: TranslateFn,
+) {
     if (!minutes || Number.isNaN(minutes)) return null;
-    if (minutes < 60) return `${Math.round(minutes)}분`;
+    const number = new Intl.NumberFormat(locale, { maximumFractionDigits: 0 });
+    if (minutes < 60) {
+        return t('mapRoute.duration.minutes', { value: number.format(Math.round(minutes)) });
+    }
     const hours = Math.floor(minutes / 60);
     const remaining = Math.round(minutes % 60);
     if (remaining === 0) {
-        return `${hours}시간`;
+        return t('mapRoute.duration.hours', { value: number.format(hours) });
     }
-    return `${hours}시간 ${remaining}분`;
+    return t('mapRoute.duration.hoursMinutes', {
+        hours: number.format(hours),
+        minutes: number.format(remaining),
+    });
 }
 
 export default function MapRoutePreview({ metadata }: MapRoutePreviewProps) {
     const containerRef = useRef<HTMLDivElement | null>(null);
     const [error, setError] = useState<string | null>(null);
+    const { t, locale } = useLocale();
 
-    const durationLabel = useMemo(() => formatDuration(metadata.route?.duration_minutes ?? undefined), [metadata.route?.duration_minutes]);
+    const durationLabel = useMemo(
+        () => formatDuration(metadata.route?.duration_minutes ?? undefined, locale, t),
+        [metadata.route?.duration_minutes, locale, t],
+    );
     const distanceLabel = useMemo(() => {
         const distance = metadata.route?.distance_km;
         if (distance == null || Number.isNaN(distance)) {
             return null;
         }
-        return `${distance.toFixed(1)}km`;
-    }, [metadata.route?.distance_km]);
+        const formatted = new Intl.NumberFormat(locale, { maximumFractionDigits: 1 }).format(distance);
+        return t('mapRoute.distance', { value: formatted });
+    }, [metadata.route?.distance_km, locale, t]);
 
     useEffect(() => {
         let cleanup: (() => void) | undefined;
@@ -87,9 +106,14 @@ export default function MapRoutePreview({ metadata }: MapRoutePreviewProps) {
                 });
                 overlays.push(marker);
 
-                if (biz.name || biz.address) {
+                if (biz.name || biz.address || biz.phone) {
                     const infoWindow = new kakao.maps.InfoWindow({
-                        content: `\n<div style="padding:6px 8px;font-size:12px;">${biz.name}}</div>`,
+                        content:
+                            `\n<div style="padding:6px 8px;font-size:12px;">` +
+                            `${biz.name ? `<strong>${biz.name}</strong>` : ''}` +
+                            `${biz.address ? `<br/>${t('mapRoute.infoWindow.addressLabel')}: ${biz.address}` : ''}` +
+                            `${biz.phone ? `<br/>${t('mapRoute.infoWindow.phoneLabel')}: ${biz.phone}` : ''}` +
+                            `</div>`,
                         removable: true,
                     });
                     infoWindow.open(map, marker);
@@ -134,7 +158,7 @@ export default function MapRoutePreview({ metadata }: MapRoutePreviewProps) {
             handleKakaoLoad();
         } else {
             if (!KAKAO_APP_KEY) {
-                setError('카카오 지도 API 키(NEXT_PUBLIC_KAKAO_MAP_KEY)가 설정되어 있지 않습니다.');
+                setError(t('mapRoute.error.missingKey'));
                 return () => undefined;
             }
             let script = document.getElementById(KAKAO_SCRIPT_ID) as HTMLScriptElement | null;
@@ -148,7 +172,7 @@ export default function MapRoutePreview({ metadata }: MapRoutePreviewProps) {
                 script.addEventListener('load', handleKakaoLoad);
                 script.addEventListener('error', () => {
                     if (!cancelled) {
-                        setError('카카오 지도 SDK를 불러오지 못했습니다. 네트워크 상태를 확인하세요.');
+                        setError(t('mapRoute.error.loadFailed'));
                     }
                 });
                 document.head.appendChild(script);
@@ -165,7 +189,7 @@ export default function MapRoutePreview({ metadata }: MapRoutePreviewProps) {
                 cleanup();
             }
         };
-    }, [metadata]);
+    }, [metadata, locale, t]);
 
     return (
         <div className="space-y-3">
@@ -175,13 +199,14 @@ export default function MapRoutePreview({ metadata }: MapRoutePreviewProps) {
             />
             {(distanceLabel || durationLabel) && (
                 <p className="text-xs text-muted-foreground">
-                    {distanceLabel && <span>거리: {distanceLabel}</span>}
+                    {distanceLabel && <span>{t('mapRoute.distancePrefix')}: {distanceLabel}</span>}
                     {distanceLabel && durationLabel && <span className="mx-1">·</span>}
-                    {durationLabel && <span>예상 소요: {durationLabel}</span>}
+                    {durationLabel && <span>{t('mapRoute.durationPrefix')}: {durationLabel}</span>}
                 </p>
             )}
             {metadata.businesses.length > 0 && (
                 <div className="rounded-lg border border-border/40 bg-background/60 p-3">
+                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">{t('mapRoute.businessListTitle')}</p>
                     <ul className="mt-2 space-y-1 text-xs text-foreground/80">
                         {metadata.businesses.map(biz => (
                             <li key={`${biz.name}-${biz.lat}-${biz.lng}`}>

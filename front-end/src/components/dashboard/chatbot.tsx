@@ -10,6 +10,7 @@ import { useTranscription } from '@/context/transcription-context';
 import { API_BASE_URL } from '@/lib/config';
 import { useToast } from '@/hooks/use-toast';
 import { useAgentInsights } from '@/context/agent-insights-context';
+import { useLocale } from '@/context/locale-context';
 import type { AgentChatResponse, ToolResult, ToolResultPayload } from '@/types/agent';
 
 type Message = {
@@ -78,8 +79,10 @@ function createMessageId(prefix: 'user' | 'bot') {
 }
 
 export default function Chatbot() {
+    const { t } = useLocale();
+    const initialGreeting = t('chatbot.initialGreeting');
     const [messages, setMessages] = useState<Message[]>([
-        { id: createMessageId('bot'), text: 'Hello! How can I assist you today?', sender: 'bot', status: 'delivered' },
+        { id: createMessageId('bot'), text: initialGreeting, sender: 'bot', status: 'delivered' },
     ]);
     const [inputValue, setInputValue] = useState('');
     const [isCalling, setIsCalling] = useState(false);
@@ -88,6 +91,15 @@ export default function Chatbot() {
     const { toast } = useToast();
     const { recordToolResults } = useAgentInsights();
     const scrollAreaRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        setMessages(prev => {
+            if (prev.length === 1 && prev[0]?.sender === 'bot' && !prev[0]?.variant) {
+                return [{ ...prev[0], text: initialGreeting }];
+            }
+            return prev;
+        });
+    }, [initialGreeting]);
 
     const handleSendMessage = useCallback(async () => {
         const text = inputValue.trim();
@@ -102,7 +114,11 @@ export default function Chatbot() {
             status: 'delivered',
         };
 
-        setMessages(prev => [...prev, userMessage, { id: 'agent-pending', text: 'Thinking…', sender: 'bot', status: 'pending' }]);
+        setMessages(prev => [
+            ...prev,
+            userMessage,
+            { id: 'agent-pending', text: t('chatbot.pending'), sender: 'bot', status: 'pending' },
+        ]);
         setInputValue('');
         setIsSending(true);
 
@@ -152,17 +168,19 @@ export default function Chatbot() {
                 return next;
             });
         } catch (error) {
-            const message = error instanceof Error ? error.message : 'Failed to fetch agent response.';
+            const fallback = t('chatbot.toast.messageFailed.description');
+            console.error('Failed to fetch agent response', error);
+            const message = fallback;
             toast({
                 variant: 'destructive',
-                title: 'Message failed',
+                title: t('chatbot.toast.messageFailed.title'),
                 description: message,
             });
             setMessages(prev => prev.filter(message => message.id !== 'agent-pending'));
         } finally {
             setIsSending(false);
         }
-    }, [inputValue, isSending, recordToolResults, toast]);
+    }, [inputValue, isSending, recordToolResults, t, toast]);
 
     const handleStartCall = async () => {
         setIsCalling(true);
@@ -181,14 +199,16 @@ export default function Chatbot() {
 
             await start();
             toast({
-                title: 'Call started',
-                description: 'Streaming live transcription from the charter call.',
+                title: t('chatbot.toast.callStarted.title'),
+                description: t('chatbot.toast.callStarted.description'),
             });
         } catch (error) {
-            const message = error instanceof Error ? error.message : 'Failed to start the call.';
+            const fallback = t('chatbot.toast.callFailed.description');
+            console.error('Call start failed', error);
+            const message = fallback;
             toast({
                 variant: 'destructive',
-                title: 'Call Failed',
+                title: t('chatbot.toast.callFailed.title'),
                 description: message,
             });
         } finally {
@@ -227,15 +247,15 @@ export default function Chatbot() {
                                         {isPending ? (
                                             <span className="inline-flex items-center gap-2 text-sm text-muted-foreground">
                                                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                                {message.text ?? 'Thinking…'}
+                                                {message.text ?? t('chatbot.pending')}
                                             </span>
                                         ) : isCallSuggestion ? (
                                             <div className="space-y-3 text-sm">
                                                 <div className="font-medium text-foreground">
-                                                    Ready to confirm availability?
+                                                    {t('chatbot.callSuggestion.title')}
                                                 </div>
                                                 <p className="text-muted-foreground">
-                                                    I can connect with the charter and stream the conversation live. Start the call whenever you&apos;re ready.
+                                                    {t('chatbot.callSuggestion.description')}
                                                 </p>
                                                 <Button
                                                     onClick={handleStartCall}
@@ -245,22 +265,22 @@ export default function Chatbot() {
                                                     {isCalling ? (
                                                         <>
                                                             <Loader2 className="h-4 w-4 animate-spin" />
-                                                            Dialing...
+                                                            {t('transcription.dialingButton')}
                                                         </>
                                                     ) : (
                                                         <>
                                                             <PhoneCall className="h-4 w-4" />
                                                             {isActive
-                                                                ? 'Call in Progress'
+                                                                ? t('chatbot.callButton.callInProgress')
                                                                 : hasAttempted
-                                                                    ? 'Restart Call'
-                                                                    : 'Start Call'}
+                                                                    ? t('chatbot.callButton.restart')
+                                                                    : t('chatbot.callButton.start')}
                                                         </>
                                                     )}
                                                 </Button>
                                                 {isActive && (
                                                     <p className="text-xs text-muted-foreground">
-                                                        Live transcription is flowing to the panel on the right.
+                                                        {t('chatbot.callSuggestion.note')}
                                                     </p>
                                                 )}
                                             </div>
@@ -275,7 +295,7 @@ export default function Chatbot() {
                     </ScrollArea>
                 <div className="flex gap-2">
                     <Input
-                        placeholder="Type a message..."
+                        placeholder={t('chatbot.input.placeholder')}
                         value={inputValue}
                         onChange={(e) => setInputValue(e.target.value)}
                         onKeyDown={(e) => {
@@ -283,10 +303,10 @@ export default function Chatbot() {
                                 void handleSendMessage();
                             }
                         }}
-                        aria-label="Chat message input"
+                        aria-label={t('chatbot.input.ariaLabel')}
                         disabled={isSending}
                     />
-                    <Button onClick={() => void handleSendMessage()} aria-label="Send message" disabled={isSending}>
+                    <Button onClick={() => void handleSendMessage()} aria-label={t('chatbot.button.sendAriaLabel')} disabled={isSending}>
                         {isSending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
                     </Button>
                 </div>
