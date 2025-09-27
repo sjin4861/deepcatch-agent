@@ -27,9 +27,11 @@ function resolveCallEndpoint() {
 }
 
 function resolveChatEndpoint() {
-    // if (API_BASE_URL) {
-    //     return `${API_BASE_URL.replace(/\/$/, '')}/chat`;
-    // }
+    if (API_BASE_URL) {
+        const end_point = `${API_BASE_URL.replace(/\/$/, '')}/chat`;
+        console.log('Chat endpoint:', end_point);
+        return end_point;
+    }
     return '/api/mock/chat';
 }
 
