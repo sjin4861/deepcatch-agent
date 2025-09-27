@@ -32,6 +32,8 @@ def determine_actions(message: str, missing_keys: List[str]) -> List[str]:
         actions.append("planner")
     if any(keyword in lowered for keyword in ["call", "전화", "연결", "예약해", "contact"]):
         actions.append("call")
+    if any(keyword in lowered for keyword in ["map", "route", "지도", "길찾기", "경로"]):
+        actions.append("map_route_generation_api")
     if not actions or missing_keys:
         if "planner" not in actions:
             actions.insert(0, "planner")
@@ -122,6 +124,7 @@ def tool_runner_node(state: ConversationState) -> ConversationState:
         for action in output.follow_up_actions:
             if action not in action_queue:
                 action_queue.append(action)
+        updates["action_queue"] = action_queue
 
     if "plan_snapshot" not in updates:
         snapshot = state.get("plan_snapshot")
@@ -136,7 +139,7 @@ def tool_runner_node(state: ConversationState) -> ConversationState:
         updates["stage"] = updates["plan_snapshot"].stage
 
     updates["tool_results"] = tool_results
-    updates["action_queue"] = action_queue
+    updates.setdefault("action_queue", action_queue)
 
     return updates
 

@@ -15,9 +15,10 @@ import type { AgentChatResponse, ToolResult, ToolResultPayload } from '@/types/a
 
 type Message = {
     id: string;
-    text: string;
     sender: 'user' | 'bot';
+    text?: string;
     status?: 'pending' | 'delivered';
+    variant?: 'call-suggestion';
 };
 
 function resolveCallEndpoint() {
@@ -82,7 +83,6 @@ export default function Chatbot() {
         { id: createMessageId('bot'), text: 'Hello! How can I assist you today?', sender: 'bot', status: 'delivered' },
     ]);
     const [inputValue, setInputValue] = useState('');
-    const [callSuggested, setCallSuggested] = useState(false);
     const [isCalling, setIsCalling] = useState(false);
     const [isSending, setIsSending] = useState(false);
     const { start, isActive, hasAttempted } = useTranscription();
@@ -138,12 +138,21 @@ export default function Chatbot() {
                         status: 'delivered',
                     });
                 }
+
+                if (payload.callSuggested) {
+                    const hasCallSuggestion = next.some(message => message.variant === 'call-suggestion');
+                    if (!hasCallSuggestion) {
+                        next.push({
+                            id: createMessageId('bot'),
+                            sender: 'bot',
+                            status: 'delivered',
+                            variant: 'call-suggestion',
+                        });
+                    }
+                }
+
                 return next;
             });
-
-            if (payload.callSuggested) {
-                setCallSuggested(true);
-            }
         } catch (error) {
             const message = error instanceof Error ? error.message : 'Failed to fetch agent response.';
             toast({
@@ -172,16 +181,6 @@ export default function Chatbot() {
                 throw new Error(`Failed to start call (${response.status})`);
             }
 
-            setMessages(prev => [
-                ...prev,
-                {
-                    id: createMessageId('bot'),
-                    text: 'Great! I\'m dialing the fishing charter now. Watch the Live Transcription panel for the conversation.',
-                    sender: 'bot',
-                    status: 'delivered',
-                },
-            ]);
-
             await start();
             toast({
                 title: 'Call started',
@@ -209,62 +208,73 @@ export default function Chatbot() {
     }, [messages]);
 
     return (
-        <Card className="flex flex-col h-full min-h-[80vh]">
+        <Card className="flex flex-col min-h-[80vh]">
             <CardContent className="flex-1 flex flex-col p-4 gap-4 overflow-hidden">
                 {/* Call Progress Bar 이동: 이제 Live Transcription 패널로 이전됨 */}
                 <ScrollArea className="h-[80vh] pr-4 -mr-4" ref={scrollAreaRef}>
                     <div className="space-y-4">
-                        {messages.map((message, index) => (
-                            <div key={message.id ?? index} className={`flex ${message.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
-                                <div className={`max-w-xs lg:max-w-md rounded-lg px-4 py-2 shadow-sm ${message.sender === 'user' ? 'bg-primary text-primary-foreground' : 'bg-secondary'}`}>
-                                    {message.status === 'pending' ? (
-                                        <span className="inline-flex items-center gap-2 text-sm text-muted-foreground">
-                                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                            {message.text}
-                                        </span>
-                                    ) : (
-                                        <span className="whitespace-pre-line break-words">{message.text}</span>
-                                    )}
+                        {messages.map((message, index) => {
+                            const isUser = message.sender === 'user';
+                            const isPending = message.status === 'pending';
+                            const isCallSuggestion = message.variant === 'call-suggestion';
+                            const bubbleColor = isCallSuggestion
+                                ? 'bg-accent/20 text-foreground border border-accent/40'
+                                : isUser
+                                    ? 'bg-primary text-primary-foreground'
+                                    : 'bg-secondary';
+                            return (
+                                <div key={message.id ?? index} className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
+                                    <div
+                                        className={`max-w-xs lg:max-w-md rounded-lg px-4 py-2 shadow-sm ${bubbleColor}`}
+                                    >
+                                        {isPending ? (
+                                            <span className="inline-flex items-center gap-2 text-sm text-muted-foreground">
+                                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                                {message.text ?? 'Thinking…'}
+                                            </span>
+                                        ) : isCallSuggestion ? (
+                                            <div className="space-y-3 text-sm">
+                                                <div className="font-medium text-foreground">
+                                                    Ready to confirm availability?
+                                                </div>
+                                                <p className="text-muted-foreground">
+                                                    I can connect with the charter and stream the conversation live. Start the call whenever you&apos;re ready.
+                                                </p>
+                                                <Button
+                                                    onClick={handleStartCall}
+                                                    disabled={isCalling || isActive}
+                                                    className="w-fit flex items-center gap-2"
+                                                >
+                                                    {isCalling ? (
+                                                        <>
+                                                            <Loader2 className="h-4 w-4 animate-spin" />
+                                                            Dialing...
+                                                        </>
+                                                    ) : (
+                                                        <>
+                                                            <PhoneCall className="h-4 w-4" />
+                                                            {isActive
+                                                                ? 'Call in Progress'
+                                                                : hasAttempted
+                                                                    ? 'Restart Call'
+                                                                    : 'Start Call'}
+                                                        </>
+                                                    )}
+                                                </Button>
+                                                {isActive && (
+                                                    <p className="text-xs text-muted-foreground">
+                                                        Live transcription is flowing to the panel on the right.
+                                                    </p>
+                                                )}
+                                            </div>
+                                        ) : (
+                                            <span className="whitespace-pre-line break-words">{message.text}</span>
+                                        )}
+                                    </div>
                                 </div>
-                            </div>
-                        ))}
+                            );
+                        })}
                     </div>
-                    {callSuggested && (
-                        <div className="border border-dashed border-accent/40 bg-accent/10 rounded-lg p-4 space-y-3 text-sm">
-                            <div className="font-medium text-foreground">
-                                Ready to confirm availability?
-                            </div>
-                            <p className="text-muted-foreground">
-                                I can connect with the charter and stream the conversation live. Start the call whenever you&apos;re ready.
-                            </p>
-                            <Button
-                                onClick={handleStartCall}
-                                disabled={isCalling || isActive}
-                                className="w-fit flex items-center gap-2"
-                            >
-                                {isCalling ? (
-                                    <>
-                                        <Loader2 className="h-4 w-4 animate-spin" />
-                                        Dialing...
-                                    </>
-                                ) : (
-                                    <>
-                                        <PhoneCall className="h-4 w-4" />
-                                        {isActive
-                                            ? 'Call in Progress'
-                                            : hasAttempted
-                                                ? 'Restart Call'
-                                                : 'Start Call'}
-                                    </>
-                                )}
-                            </Button>
-                            {isActive && (
-                                <p className="text-xs text-muted-foreground">
-                                    Live transcription is flowing to the panel on the right.
-                                </p>
-                            )}
-                        </div>
-                    )}
                     </ScrollArea>
                 <div className="flex gap-2">
                     <Input

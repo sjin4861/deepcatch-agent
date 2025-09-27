@@ -47,6 +47,8 @@ def clear_persistent_data() -> None:
         raise
     finally:
         session.close()
+    summary = reseed_businesses(force=True, normalize=True)
+    logger.info("비즈니스 데이터 재시드 결과: %s", summary)
 
 import openai
 from src.realtime_server import sio

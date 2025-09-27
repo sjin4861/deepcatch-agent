@@ -66,6 +66,21 @@ def reseed_businesses(*, force: bool = False, normalize: bool = True) -> Dict[st
             name = (row.get('name') or '').strip()
             phone = (row.get('phone') or '').strip()
             location = (row.get('location') or '').strip()
+            address = (row.get('address') or '').strip()
+            lat_raw = (row.get('latitude') or '').strip()
+            lng_raw = (row.get('longitude') or '').strip()
+            latitude = None
+            longitude = None
+            if lat_raw:
+                try:
+                    latitude = float(lat_raw)
+                except ValueError:
+                    logger.warning(f"[reseed] latitude 변환 실패 name={name} value={lat_raw}")
+            if lng_raw:
+                try:
+                    longitude = float(lng_raw)
+                except ValueError:
+                    logger.warning(f"[reseed] longitude 변환 실패 name={name} value={lng_raw}")
             if not name or not phone:
                 continue
             if normalize:
@@ -79,10 +94,28 @@ def reseed_businesses(*, force: bool = False, normalize: bool = True) -> Dict[st
                 if location and biz.location != location:
                     biz.location = location
                     changed = True
+                if address and biz.address != address:
+                    biz.address = address
+                    changed = True
+                if latitude is not None and biz.latitude != latitude:
+                    biz.latitude = latitude
+                    changed = True
+                if longitude is not None and biz.longitude != longitude:
+                    biz.longitude = longitude
+                    changed = True
                 if changed:
                     updated += 1
             else:
-                session.add(models.Business(name=name, phone=phone, location=location or '구룡포'))
+                session.add(
+                    models.Business(
+                        name=name,
+                        phone=phone,
+                        location=location or '구룡포',
+                        address=address or None,
+                        latitude=latitude,
+                        longitude=longitude,
+                    )
+                )
                 added += 1
         session.commit()
         return {"added": added, "updated": updated, "deleted": deleted, "path": csv_path}
@@ -127,3 +160,15 @@ def run_migrations() -> None:
         if "departure" not in plan_columns:
             logger.info("Adding missing 'departure' column to plans table")
             connection.execute(text("ALTER TABLE plans ADD COLUMN departure VARCHAR"))
+
+        if "businesses" in inspector.get_table_names():
+            business_columns = {column["name"] for column in inspector.get_columns("businesses")}
+            if "address" not in business_columns:
+                logger.info("Adding missing 'address' column to businesses table")
+                connection.execute(text("ALTER TABLE businesses ADD COLUMN address VARCHAR"))
+            if "latitude" not in business_columns:
+                logger.info("Adding missing 'latitude' column to businesses table")
+                connection.execute(text("ALTER TABLE businesses ADD COLUMN latitude FLOAT"))
+            if "longitude" not in business_columns:
+                logger.info("Adding missing 'longitude' column to businesses table")
+                connection.execute(text("ALTER TABLE businesses ADD COLUMN longitude FLOAT"))

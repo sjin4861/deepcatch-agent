@@ -2,12 +2,14 @@ from .call import CallTool
 from .fish import FishInsightsTool
 from .planner import PlannerTool
 from .weather import WeatherTool
+from .map_route import MapRouteTool
 
 __all__ = [
     "CallTool",
     "FishInsightsTool",
     "PlannerTool",
     "WeatherTool",
+    "MapRouteTool",
     "default_tools",
     "create_default_registry",
 ]
@@ -18,6 +20,7 @@ def default_tools():
         WeatherTool(),
         FishInsightsTool(),
         PlannerTool(),
+        MapRouteTool(),
         CallTool(),
     ]
 
