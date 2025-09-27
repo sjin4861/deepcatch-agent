@@ -49,3 +49,28 @@ export type MapRouteMetadata = {
         };
     };
 };
+
+export type FisheryCatchTopSpecies = {
+    name: string;
+    catch?: number;
+    share?: number;
+    averagePrice?: number | null;
+};
+
+export type FisheryCatchTimelinePoint = {
+    date: string;
+    [species: string]: number | string;
+};
+
+export type FisheryCatchMetadata = {
+    analysisRange?: string;
+    chartTimeline?: FisheryCatchTimelinePoint[];
+    chartSeries?: Array<{
+        species: string;
+        points: Array<{ date: string; weight: number }>;
+    }>;
+    topSpecies?: FisheryCatchTopSpecies[];
+    totalCatchKg?: number;
+    summary?: string;
+    dataSource?: string;
+};

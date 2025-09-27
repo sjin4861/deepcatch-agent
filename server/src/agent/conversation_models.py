@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass, field, replace
 from typing import Any, Dict, List, Optional, TYPE_CHECKING, TypedDict
 
 from .types import ChatResponse, ChatToolResult
@@ -86,20 +86,47 @@ class WeatherReport:
 
 
 @dataclass
-class FishReport:
-    species: List[Dict[str, Any]]
-    note: str
+class FisheryCatchReport:
+    analysis_range: str
+    top_species: List[Dict[str, Any]]
+    total_catch: float
+    summary: str
+    raw_records: List[Dict[str, Any]]
+    chart_series: List[Dict[str, Any]]
+    chart_timeline: List[Dict[str, Any]]
+    data_source: Optional[str] = None
+    trend_highlights: List[Dict[str, Any]] = field(default_factory=list)
 
     def as_tool_result(self) -> ChatToolResult:
-        lines = ["현재 어종 정보"]
-        for item in self.species:
-            lines.append(f"- {item['name']}: {item['count']}마리 추정")
-        lines.append(self.note)
+        lines = [
+            f"분석 기간: {self.analysis_range}",
+            f"총 어획량: {self.total_catch:.1f}kg",
+        ]
+        if self.top_species:
+            lines.append("주요 어종 TOP5:")
+        for idx, item in enumerate(self.top_species, start=1):
+            share_text = f" ({item['share']:.1f}% 비중)" if item.get("share") is not None else ""
+            lines.append(f"{idx}. {item['name']} - {item['catch']:.1f}kg{share_text}")
+        if self.summary:
+            lines.append(self.summary)
+        if self.data_source:
+            lines.append(f"데이터 출처: {self.data_source}")
+
         return make_tool_result(
-            tool="fish_insights",
-            title="구룡포 어종 업데이트",
+            tool="fishery_catch",
+            title="구룡포 어획량 분석",
             content="\n".join(lines),
-            metadata={"species": self.species, "note": self.note},
+            metadata={
+                "analysisRange": self.analysis_range,
+                "topSpecies": self.top_species,
+                "totalCatchKg": self.total_catch,
+                "summary": self.summary,
+                "records": self.raw_records,
+                "chartSeries": self.chart_series,
+                "chartTimeline": self.chart_timeline,
+                "dataSource": self.data_source,
+                "trendHighlights": self.trend_highlights,
+            },
         )
 
 
@@ -152,7 +179,7 @@ class ConversationState(TypedDict, total=False):
     stage: str
     missing_keys: List[str]
     weather: WeatherReport
-    fish_info: FishReport
+    fishery_catch: FisheryCatchReport
     call_result: CallSummary
     tool_results: List[ChatToolResult]
     action_queue: List[str]
