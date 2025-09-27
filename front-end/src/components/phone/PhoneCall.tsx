@@ -32,12 +32,17 @@ export default function PhoneCall() {
   const [isLoading, setIsLoading] = useState(false);
   const [callResponse, setCallResponse] = useState<CallResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // 시나리오 선택 (테스트 용)
+  const [scenarioId, setScenarioId] = useState<'scenario1' | 'scenario2' | 'scenario3'>('scenario1');
 
   const { 
-    isConnected, 
-    callStatus, 
-    transcription, 
-    aiResponse 
+    isConnected,
+    callStatus,
+    transcription,
+    aiResponse,
+    latestUserSpeech,
+    joinCallRoom,
+    scenarioProgress
   } = useRealtimeConnection();
 
   const handleMakeCall = async () => {
@@ -57,6 +62,9 @@ export default function PhoneCall() {
         fishing_request: fishingRequest.trim()
       };
 
+      // scenario_id를 request body에 추가 (백엔드에서 선택된 시나리오 강제 적용)
+      const extendedBody = { ...requestData, scenario_id: scenarioId };
+
       console.log('전화 발신 요청:', requestData);
 
       const response = await fetch('/api/fishing_request', {
@@ -64,7 +72,7 @@ export default function PhoneCall() {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(requestData)
+        body: JSON.stringify(extendedBody)
       });
 
       if (!response.ok) {
@@ -76,6 +84,10 @@ export default function PhoneCall() {
       setCallResponse(data);
       
       console.log('전화 발신 성공:', data);
+      if (data.call_sid) {
+        // Socket.IO 룸 참여 -> Twilio에서 call_sid별 이벤트 분리 가능 시 확장
+        joinCallRoom(data.call_sid);
+      }
 
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : '알 수 없는 오류가 발생했습니다.';
@@ -149,6 +161,36 @@ export default function PhoneCall() {
           />
         </div>
 
+        {/* 시나리오 토글 (테스트 전용) */}
+        <div className="space-y-2">
+          <Label>테스트 시나리오 선택</Label>
+          <div className="flex gap-2 flex-wrap">
+            {(['scenario1','scenario2','scenario3'] as const).map(s => (
+              <button
+                key={s}
+                type="button"
+                onClick={()=>setScenarioId(s)}
+                className={`px-3 py-1 rounded border text-sm transition-colors ${
+                  scenarioId === s
+                    ? 'bg-blue-600 text-white border-blue-600'
+                    : 'bg-white hover:bg-blue-50 border-gray-300'
+                }`}
+              >
+                {s === 'scenario1' && 'Scenario 1'}
+                {s === 'scenario2' && 'Scenario 2'}
+                {s === 'scenario3' && 'Scenario 3'}
+              </button>
+            ))}
+          </div>
+          <p className="text-xs text-gray-500">시나리오 모드가 활성화된 경우 선택된 스크립트로 진행됩니다.</p>
+          {scenarioProgress && (
+            <div className="text-xs text-gray-600 flex items-center gap-2">
+              <span>진행: {scenarioProgress.consumed}/{scenarioProgress.total}</span>
+              {scenarioProgress.is_complete && <span className="text-green-600">(완료)</span>}
+            </div>
+          )}
+        </div>
+
         {/* 전화 발신 버튼 */}
         <Button 
           onClick={handleMakeCall}
@@ -209,6 +251,9 @@ export default function PhoneCall() {
                 ({transcription.is_final ? '최종' : '임시'})
               </span>
             </p>
+            {latestUserSpeech && (
+              <p className="text-xs text-gray-600 mt-2">최근 사용자: {latestUserSpeech}</p>
+            )}
           </div>
         )}
 
@@ -228,6 +273,7 @@ export default function PhoneCall() {
             <li>• Twilio Trial 계정에서는 인증된 번호로만 발신 가능합니다</li>
             <li>• 실제 전화가 연결되면 AI가 자동으로 예약을 진행합니다</li>
             <li>• 통화 내용은 실시간으로 전사되어 표시됩니다</li>
+            <li>• 선택된 Scenario가 있다면 해당 스크립트를 순서대로 재생 후 자동 종료됩니다</li>
           </ul>
         </div>
       </CardContent>

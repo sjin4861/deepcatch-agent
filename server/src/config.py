@@ -38,13 +38,18 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:3000,http://localhost:9002,null"
     
     # Twilio Media Stream 설정
-    twilio_webhook_url: str = "https://your-domain.ngrok.io"
+    twilio_webhook_url: str = os.getenv("TWILIO_WEBHOOK_URL", "https://your-domain.ngrok.io")
     twilio_sample_rate: int = 8000
     twilio_encoding: str = "mulaw"
     
     # 오디오 처리 설정
     audio_chunk_size: int = 1024
     audio_buffer_size: int = 4096
+
+    # 시나리오 설정 (옵션)
+    scenario_mode: bool | None = None  # SCENARIO_MODE
+    scenario_dir: str | None = None    # SCENARIO_DIR
+    scenario_id: str | None = None     # SCENARIO_ID
     
     class Config:
         env_file = ".env"

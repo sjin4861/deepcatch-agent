@@ -148,24 +148,22 @@ class OpenAIRealtimeClient:
     
     async def _send_session_update(self):
         """세션 설정 업데이트"""
+        # NOTE: 2025-09 OpenAI Realtime 사양 변경으로 input_audio_format / output_audio_format 이
+        # 객체가 아닌 단순 enum 문자열 (pcm16 | g711_ulaw | g711_alaw) 로 요구됨.
+        # 기존 구조를 유지하면 "Invalid type for 'session.input_audio_format'" 오류 발생.
         session_config = {
             "type": SessionEventType.SESSION_UPDATE,
             "session": {
                 "modalities": ["text", "audio"],
                 "instructions": self._get_system_instructions(),
                 "voice": self.voice,
-                "input_audio_format": {
-                    "type": "pcm",
-                    "encoding": "s16le",
-                    "sample_rate": 8000,
-                    "channels": 1
-                },
-                "output_audio_format": {
-                    "type": "pcm",
-                    "encoding": "s16le",
-                    "sample_rate": 24000,
-                    "channels": 1
-                },
+                # 이전(구) 포맷 참고용:
+                # "input_audio_format": {"type": "pcm", "encoding": "s16le", "sample_rate": 8000, "channels": 1},
+                # "output_audio_format": {"type": "pcm", "encoding": "s16le", "sample_rate": 24000, "channels": 1},
+                # 최신 사양: 단일 문자열 지정
+                "input_audio_format": "pcm16",
+                "output_audio_format": "pcm16",
+                # Whisper 모델 명은 향후 변경될 수 있으므로 설정화 고려
                 "input_audio_transcription": {
                     "model": "whisper-1"
                 },
