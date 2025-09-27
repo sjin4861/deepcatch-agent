@@ -1,5 +1,5 @@
 # main.py - 낚시 예약 AI 에이전트
-from fastapi import FastAPI, Request, Form, HTTPException, Response, WebSocket, WebSocketDisconnect, Depends
+from fastapi import FastAPI, Request, HTTPException, Response, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from twilio.twiml.voice_response import VoiceResponse, Gather
 from twilio.rest import Client
@@ -16,12 +16,19 @@ from dotenv import load_dotenv
 
 from sqlalchemy.orm import Session
 # 지침에 따른 데이터베이스 연결
-from .database import get_db, engine
+from .database import get_db, engine, seed_businesses_if_needed, reseed_businesses
 from . import models, crud
 from .agent import ChatRequest, ChatResponse, PlanAgent
+from .agent.services import AgentServices
+from .agent import call_runtime
+from .agent.call_test_flow import run_call_flow
 
 # 데이터베이스 테이블 생성
 models.Base.metadata.create_all(bind=engine)
+try:
+    seed_businesses_if_needed()
+except Exception as se:
+    logger.warning(f"비즈니스 시드 실패: {se}")
 
 import openai
 from src.realtime_server import sio
@@ -48,121 +55,8 @@ app.add_middleware(
 twilio_client = Client(os.getenv('ACCOUNT_SID'), os.getenv('AUTH_TOKEN'))
 openai_client = openai.OpenAI(api_key=settings.openai_api_key)
 
-# 인메모리 대화 상태 저장소
 conversation_history: Dict[str, List[Dict[str, str]]] = {}
-############################
-# 시나리오 확장 지원      #
-############################
-SCENARIO_MODE = os.getenv("SCENARIO_MODE", "0").lower() in ("1", "true", "yes", "on")
-from pathlib import Path
-
-# 시나리오 디렉토리 해석 로직 개선: 실행 기준 디렉토리(server/)와 루트 혼동 방지
-_raw_scenario_dir = os.getenv("SCENARIO_DIR")
-_base_dir = Path(__file__).resolve().parent  # server/src
-_project_root = _base_dir.parent  # server/
-
-def _resolve_scenario_dir() -> str:
-    candidates = []
-    if _raw_scenario_dir:
-        p = Path(_raw_scenario_dir)
-        if not p.is_absolute():
-            # 현재 working dir이 server/ 라면 'server/data/..' 는 중복 -> 정규화
-            candidates.append((_project_root / p).resolve())
-            # 사용자가 server/data/scenarios 로 넣었지만 실제는 data/scenarios 일 때
-            if str(p).startswith('server/'):
-                candidates.append((_project_root / str(p)[7:]).resolve())
-        else:
-            candidates.append(p)
-    # 기본 후보: server/data/scenarios -> 실제 경로는 project_root/data/scenarios
-    candidates.append((_project_root / 'data' / 'scenarios').resolve())
-    for c in candidates:
-        if c.exists() and c.is_dir():
-            return str(c)
-    # 마지막 fallback (첫 후보 반환)
-    return str(candidates[-1])
-
-SCENARIO_DIR = _resolve_scenario_dir()
-DEFAULT_SCENARIO_ID = os.getenv("SCENARIO_ID", "scenario1")
-
-# per-call 상태
-scenario_progress: Dict[str, int] = {}          # 진행 인덱스
-call_scenario_id: Dict[str, str] = {}            # call_sid -> scenario_id 매핑
-scenario_library: Dict[str, List[str]] = {}      # scenario_id -> assistant_lines
-
-def load_scenario_library() -> Dict[str, List[str]]:
-    lib: Dict[str, List[str]] = {}
-    if os.path.isdir(SCENARIO_DIR):
-        for fname in os.listdir(SCENARIO_DIR):
-            if not fname.lower().endswith('.json'): continue
-            path = os.path.join(SCENARIO_DIR, fname)
-            scenario_id = os.path.splitext(fname)[0]
-            try:
-                with open(path, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                if isinstance(data, dict) and isinstance(data.get('assistant_lines'), list):
-                    lines = [str(x) for x in data['assistant_lines'] if isinstance(x, (str, int, float))]
-                    if lines:
-                        lib[scenario_id] = lines
-                        logger.info(f"시나리오 로드: {scenario_id} ({len(lines)} lines)")
-            except Exception as e:
-                logger.warning(f"시나리오 파일 파싱 실패: {path} error={e}")
-    else:
-        logger.info(f"시나리오 디렉토리 없음: {SCENARIO_DIR} (내장 기본만 사용)")
-    logger.info(f"시나리오 디렉토리 최종 경로: {SCENARIO_DIR}")
-    # fallback: scenario1이 아예 없으면 임시 기본 생성
-    if 'scenario1' not in lib:
-        logger.warning("scenario1.json 을 찾지 못해 임시 기본 시나리오 사용")
-        lib['scenario1'] = [
-            "안녕하세요, 구룡포낚시프라자 맞으시죠? 내일 새벽 5시에 갯바위 원투 낚시 장비 대여 가능한지 확인해보고 싶습니다.",
-            "4명인데, 초보자 2명, 경험자 2명이십니다.",
-            "네, 청갯지렁이 2개랑 크릴 새우 2개로 준비 부탁드립니다. 가격은 얼마인가요?",
-            "네, 알겠습니다. 확인해보고 다시 연락드리겠습니다. 좋은 하루 되세요. 감사합니다."
-        ]
-    logger.info(f"총 시나리오 수: {len(lib)} (ids={list(lib.keys())})")
-    return lib
-
-scenario_library = load_scenario_library()
-
-def in_scenario() -> bool:
-    return SCENARIO_MODE and len(scenario_library) > 0
-
-def assign_scenario_for_call(call_sid: str, requested_id: Optional[str]) -> str:
-    chosen = requested_id or DEFAULT_SCENARIO_ID
-    if chosen not in scenario_library:
-        logger.warning(f"요청된 시나리오 {chosen} 가 라이브러리에 없음. 기본 scenario1 사용")
-        chosen = "scenario1"
-    call_scenario_id[call_sid] = chosen
-    scenario_progress[call_sid] = 0
-    logger.info(f"통화 {call_sid} 시나리오 할당: {chosen}")
-    return chosen
-
-def get_current_line(call_sid: str) -> Tuple[Optional[str], int, int]:
-    sid = call_scenario_id.get(call_sid)
-    if not sid: return (None, 0, 0)
-    lines = scenario_library.get(sid, [])
-    idx = scenario_progress.get(call_sid, 0)
-    if idx < len(lines):
-        return (lines[idx], idx, len(lines))
-    return (None, idx, len(lines))
-
-def advance_scenario(call_sid: str):
-    scenario_progress[call_sid] = scenario_progress.get(call_sid, 0) + 1
-
-async def emit_scenario_progress(call_sid: str):
-    """시나리오 진행 상황을 클라이언트에 브로드캐스트"""
-    if call_sid not in call_scenario_id:
-        return
-    sid = call_scenario_id[call_sid]
-    lines = scenario_library.get(sid, [])
-    idx = scenario_progress.get(call_sid, 0)  # 이미 advance 된 상태 (소비한 개수)
-    total = len(lines)
-    await sio.emit('scenario_progress', {
-        'call_sid': call_sid,
-        'scenario_id': sid,
-        'consumed': idx,          # 소비된(보낸) assistant 라인 수
-        'total': total,
-        'is_complete': idx >= total
-    })
+assistant_stream_buffers: Dict[str, str] = {}
 
 ############################
 # 기존 함수 in_scenario 재정의 완료
@@ -170,9 +64,7 @@ async def emit_scenario_progress(call_sid: str):
 
 
 class CallRequest(BaseModel):
-    # 선택적으로 번호를 받되, 없으면 KO_PHONENUMBER -> US_PHONENUMBER 순으로 fallback
-    to_number: Optional[str] = Field(None, description="전화를 받을 상대방 번호 (E.164 형식, 없으면 환경변수 KO_PHONENUMBER 사용)")
-    scenario_id: Optional[str] = Field(None, description="선택 실행할 시나리오 ID (scenario2, scenario3 등). SCENARIO_MODE=true 일 때만 적용")
+    to_number: Optional[str] = Field(None, description="수신 번호(E.164)")
 
 class CallResponse(BaseModel):
     status: str
@@ -203,6 +95,74 @@ async def chat_message(payload: ChatRequest, db: Session = Depends(get_db)):
             status_code=500,
             detail=f"채팅 처리 중 오류가 발생했습니다: {exc}",
         )
+
+
+class CallStatus(BaseModel):
+    call_sid: str
+    status: Optional[str]
+    transcript_turns: int
+    last_lines: List[Dict[str, str]] = []
+
+
+class CallTestRequest(BaseModel):
+    shop_name: Optional[str] = Field(None, description="테스트용 선호 업체명")
+    simulate: bool = Field(False, description="실제 통화 대신 시뮬레이션")
+
+class CallTestResponse(BaseModel):
+    result: Dict[str, Any]
+
+
+@app.post("/call", response_model=CallTestResponse)
+async def call_invoke(req: CallTestRequest, db: Session = Depends(get_db)):
+        """시나리오 기반 또는 실전화 콜 실행 (단독 CallExecutionAgent).
+
+        Body:
+            - shop_name: 특정 상점 우선 선택 (부분 매칭 허용)
+            - simulate: True 면 Twilio 실제 발신 대신 시뮬레이션 (그래프/시나리오/추출은 동일 수행)
+        반환: state / slots / transcript 일부 (front-end 가 확장 필요 시 수정 가능)
+        """
+        logger.info("/call 시작 shop=%s simulate=%s", req.shop_name, req.simulate)
+        out = run_call_flow(db, shop_name=req.shop_name, simulate=req.simulate)
+        return CallTestResponse(result=out)
+
+
+@app.get("/debug/businesses")
+async def debug_list_businesses(db: Session = Depends(get_db), location: Optional[str] = None, force: bool = False):
+    """현재 DB의 비즈니스 목록을 확인하거나 ?force=true 로 CSV 재시드를 실행.
+
+    Query Params:
+      - location: 위치 필터 (옵션)
+      - force: true 일 경우 reseed_businesses(force=True) 실행 후 목록 반환
+    """
+    if force:
+        summary = reseed_businesses(force=True, normalize=True)
+    else:
+        summary = {"reseed": False}
+    services = AgentServices(db)
+    names = services.list_business_names(location=location)
+    all_names = services.list_business_names() if location else names
+    return {
+        "location": location,
+        "count": len(names),
+        "names": names,
+        "all_total": len(all_names),
+        "reseed_summary": summary,
+    }
+
+
+@app.get("/call/status/{call_sid}", response_model=CallStatus)
+async def get_call_status(call_sid: str):
+    """런타임에 저장된 통화 상태 & 최근 transcript 일부 반환 (Swagger 테스트용)."""
+    status = call_runtime.get_status(call_sid)
+    # transcript는 drain하지 않고 내부 dict 직접 접근 (readonly)
+    turns = call_runtime._transcripts.get(call_sid, [])  # type: ignore[attr-defined]
+    preview = turns[-5:]
+    return CallStatus(
+        call_sid=call_sid,
+        status=status,
+        transcript_turns=len(turns),
+        last_lines=[{"speaker": t["speaker"], "text": t["text"], "ts": t["ts"]} for t in preview],
+    )
 
 @app.post("/call/initiate", response_model=CallResponse)
 async def initiate_call(req: CallRequest):
@@ -246,9 +206,7 @@ async def initiate_call(req: CallRequest):
         )
         logger.info(f"Twilio 통화 생성 성공: sid={call.sid} to={raw_number}")
         conversation_history[call.sid] = [{"role": "system", "content": "당신은 친절한 AI 전화 상담원입니다. 한국어로 간결하고 명확하게 답변해주세요."}]
-        # 시나리오 모드면 시나리오 할당 (call_scenario_id, scenario_progress)
-        if in_scenario():
-            assign_scenario_for_call(call.sid, req.scenario_id)
+        # 시나리오/콜 세부 로직은 agent call graph에서 관리 (여기서는 단순 발신)
 
         return CallResponse(status="success", call_sid=call.sid, message="전화 연결이 시작되었습니다.")
     except TwilioRestException as e:
@@ -261,32 +219,16 @@ async def initiate_call(req: CallRequest):
 
 
 @app.post("/voice/start")
-async def handle_voice_start(request: Request):
+async def handle_voice_start(request: Request, db: Session = Depends(get_db)):
     """통화 시작 시 초기 메시지를 재생하고 사용자 입력을 받습니다."""
     form = await request.form()
     call_sid = form.get('CallSid')
     logger.info(f"통화 시작됨 (SID: {call_sid})")
+    if call_sid:
+        # 초기 status 저장 (initiated)
+        AgentServices(db).update_call_status(call_sid, 'initiated')
     
-    # 시나리오 모드면 진행 인덱스 0의 라인을 greeting 으로 사용
-    if in_scenario() and call_sid and call_sid in call_scenario_id:
-        line, idx, total = get_current_line(call_sid)
-        greeting = line or "안녕하세요! 무엇을 도와드릴까요?"
-        # 0번 라인 소비
-        advance_scenario(call_sid)
-        if call_sid:
-            # 진행률 이벤트 전송 (greeting 포함 1개 소비 후 상태)
-            await emit_scenario_progress(call_sid)
-            # 만약 시나리오가 단 한 줄로 구성되어 이미 완료되었다면 즉시 종료
-            _, consumed_idx, total_lines = get_current_line(call_sid)
-            # get_current_line 은 아직 남은 라인 반환. 종료 판단은 scenario_progress 사용
-            if scenario_progress.get(call_sid, 0) >= total_lines:
-                # 바로 종료 (Hangup)
-                response.say(greeting, voice='Polly.Seoyeon', language='ko-KR')
-                response.hangup()
-                await sio.emit('ai_response_complete', { 'text': greeting, 'call_sid': call_sid })
-                return Response(content=str(response), media_type="application/xml")
-    else:
-        greeting = "안녕하세요! 무엇을 도와드릴까요?"
+    greeting = "안녕하세요! 무엇을 도와드릴까요?"
     response = VoiceResponse()
     response.say(greeting, voice='Polly.Seoyeon', language='ko-KR')
     # 프론트엔드 실시간 표시를 위해 초기 에이전트 멘트를 Socket.IO로 전송
@@ -312,19 +254,21 @@ async def handle_voice_start(request: Request):
     return Response(content=str(response), media_type="application/xml")
 
 @app.post("/voice/process-speech")
-async def process_speech(request: Request):
+async def process_speech(request: Request, db: Session = Depends(get_db)):
     """사용자 음성 입력을 처리하고 LLM 응답을 생성하여 반환합니다."""
     form = await request.form()
     call_sid = form.get('CallSid')
     user_speech = form.get('SpeechResult')
     
     logger.info(f"음성 수신 (SID: {call_sid}): {user_speech}")
+    services = AgentServices(db)
 
     response = VoiceResponse()
 
     if user_speech:
         # 프론트엔드로 사용자 발화 전송 (call_sid 포함)
         await sio.emit('user_speech', {'text': user_speech, 'call_sid': call_sid})
+        services.record_transcript_turn(call_sid, 'user', user_speech)
 
         # 대화 기록에 사용자 발화 추가
         if call_sid in conversation_history:
@@ -336,24 +280,6 @@ async def process_speech(request: Request):
 
         
         try:
-            # --- 시나리오 모드 처리: OpenAI 호출 전에 조기 분기 ---
-            if in_scenario() and call_sid in call_scenario_id:
-                line, idx, total = get_current_line(call_sid)
-                if line is not None:  # 아직 남은 라인 있음
-                    logger.info(f"시나리오 assistant 응답 (idx={idx}/{total}) (SID: {call_sid})")
-                    # 스트리밍 UX 일관성을 위해 begin 이벤트 먼저 전송
-                    await sio.emit('ai_response_begin', {'call_sid': call_sid})
-                    conversation_history[call_sid].append({"role": "assistant", "content": line})
-                    await sio.emit('ai_response_complete', {'text': line, 'call_sid': call_sid})
-                    response.say(line, voice='Polly.Seoyeon', language='ko-KR')
-                    advance_scenario(call_sid)
-                    await emit_scenario_progress(call_sid)
-                    # 모든 시나리오 라인을 소비했으면 Hangup 후 즉시 반환
-                    if scenario_progress.get(call_sid, 0) >= total:
-                        response.hangup()
-                        return Response(content=str(response), media_type="application/xml")
-                    raise StopIteration
-
             # OpenAI 스트리밍 호출로 토큰 단위 전송
             logger.info(f"OpenAI 스트리밍 시작 (SID: {call_sid})")
             # 프론트가 이전 응답 누적을 초기화할 수 있도록 시작 이벤트 emit
@@ -394,6 +320,15 @@ async def process_speech(request: Request):
                 if delta:
                     full_chunks.append(delta)
                     await sio.emit('ai_response_text', {'text_delta': delta, 'call_sid': call_sid})
+                    # --- Streaming transcript runtime flush (partial) ---
+                    if call_sid:
+                        buf = assistant_stream_buffers.get(call_sid, "") + delta
+                        # Flush 조건: 길이 임계 또는 문장부호 종료
+                        if len(buf) > 40 or any(buf.endswith(p) for p in [".", "?", "!", "요", "다", "."]):
+                            # runtime transcript에 부분 turn 추가
+                            services.record_transcript_turn(call_sid, 'assistant', buf.strip())
+                            buf = ""
+                        assistant_stream_buffers[call_sid] = buf
             ai_message = ''.join(full_chunks).strip()
             if not ai_message:
                 logger.warning(f"스트리밍 델타가 비어있음. 폴백 단일 요청 수행 (SID: {call_sid})")
@@ -413,6 +348,17 @@ async def process_speech(request: Request):
             # 최종 발화 내용 결정 (빈 문자열이면 사용자에게 들려준 사과 멘트 사용)
             final_text = ai_message if ai_message else "죄송합니다. 지금은 답을 제공할 수 없어요."
 
+            # 남은 partial buffer 최종 turn으로 기록 (중복 방지: final_text가 이미 포함되면 스킵)
+            if call_sid:
+                pending_buf = assistant_stream_buffers.get(call_sid, "").strip()
+                if pending_buf:
+                    if pending_buf not in final_text:
+                        services.record_transcript_turn(call_sid, 'assistant', pending_buf)
+                # 최종 발화 전체가 마지막 partial과 다르면 한 번 더 전체 문장 기록
+                if not ai_message.endswith(pending_buf):
+                    services.record_transcript_turn(call_sid, 'assistant', final_text)
+                assistant_stream_buffers[call_sid] = ""
+
             # 대화 기록 업데이트 (빈 응답이라도 실제 사용자에게 들린 문장 저장)
             conversation_history[call_sid].append({"role": "assistant", "content": final_text})
 
@@ -421,6 +367,7 @@ async def process_speech(request: Request):
 
             # 최종 응답 소켓 전송 (emit 시점을 Twilio say 이후로 이동해 UI와 음성 싱크 개선)
             await sio.emit('ai_response_complete', {'text': final_text, 'call_sid': call_sid})
+            services.record_transcript_turn(call_sid, 'assistant', final_text)
 
         except StopIteration:
             # 시나리오 분기 정상 처리 - 아무 것도 하지 않고 다음 Gather 로 진행
@@ -431,6 +378,7 @@ async def process_speech(request: Request):
             await sio.emit('openai_error', {'error': str(e)})
             # 사용자에게 들리는 멘트를 UI에도 표시
             await sio.emit('ai_response_complete', {'text': error_text, 'call_sid': call_sid})
+            services.record_transcript_turn(call_sid, 'assistant', error_text)
             conversation_history.setdefault(call_sid, [{"role": "system", "content": "당신은 친절한 AI 전화 상담원입니다."}])
             conversation_history[call_sid].append({"role": "assistant", "content": error_text})
             response.say(error_text, voice='Polly.Seoyeon', language='ko-KR')
@@ -454,7 +402,7 @@ async def process_speech(request: Request):
 
 
 @app.post("/voice/status")
-async def voice_status_callback(request: Request):
+async def voice_status_callback(request: Request, db: Session = Depends(get_db)):
     """통화 상태 변경 시 호출되는 웹훅. 통화 종료 시 프론트엔드에 알림."""
     form = await request.form()
     call_sid = form.get('CallSid')
@@ -465,6 +413,9 @@ async def voice_status_callback(request: Request):
 
     
     logger.info(f"통화 상태 업데이트 (SID: {call_sid}) status={call_status} error_code={error_code} to={to_number} from={from_number}")
+    services = AgentServices(db)
+    if call_sid and call_status:
+        services.update_call_status(call_sid, call_status)
     # 통화 종료 상태 목록
     final_statuses = ['completed', 'busy', 'failed', 'no-answer', 'canceled']
 
@@ -486,12 +437,7 @@ async def voice_status_callback(request: Request):
             if call_sid in conversation_history:
                 del conversation_history[call_sid]
                 logger.info(f"대화 기록 삭제 (SID: {call_sid})")
-            if call_sid in scenario_progress:
-                del scenario_progress[call_sid]
-                logger.info(f"시나리오 진행 상태 삭제 (SID: {call_sid})")
-            if call_sid in call_scenario_id:
-                del call_scenario_id[call_sid]
-                logger.info(f"시나리오 ID 매핑 삭제 (SID: {call_sid})")
+            # TODO: call_graph extraction이 끝났는지 확인 후 runtime cleanup (보류)
 
     return Response(status_code=200)
 
