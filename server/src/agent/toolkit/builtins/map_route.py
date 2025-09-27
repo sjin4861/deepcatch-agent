@@ -21,15 +21,28 @@ class MapRouteTool(BaseTool):
     }
 
     DEFAULT_DEPARTURE: Dict[str, Any] = {
+        "name": "체인지업가든 포항",
+        "label": "체인지업가든 포항",
+        "lat": 36.01200160051033,
+        "lng": 129.32373891016633,
+        "address": None,
+    }
+
+    POHANG_STATION: Dict[str, Any] = {
         "name": "포항역",
+        "label": "포항역",
         "lat": 36.0141,
         "lng": 129.3609,
         "address": "경북 포항시 북구 대흥동",
     }
 
     DEPARTURE_ALIASES: Dict[str, Dict[str, Any]] = {
-        "포항역": DEFAULT_DEPARTURE,
-        "pohang station": DEFAULT_DEPARTURE,
+        "체인지업가든 포항": DEFAULT_DEPARTURE,
+        "체인지업가든": DEFAULT_DEPARTURE,
+        "change up garden": DEFAULT_DEPARTURE,
+        "changeup garden": DEFAULT_DEPARTURE,
+        "포항역": POHANG_STATION,
+        "pohang station": POHANG_STATION,
         "포항 고속버스터미널": {
             "name": "포항 고속버스터미널",
             "lat": 36.0207,
@@ -81,7 +94,7 @@ class MapRouteTool(BaseTool):
         output.add_tool_result(
             make_tool_result(
                 tool=self.name,
-                title="구룡포 이동 경로 안내",
+                title="구룡포 주변 낚시점",
                 content="\n".join(content_lines),
                 metadata=metadata,
             )
@@ -107,7 +120,8 @@ class MapRouteTool(BaseTool):
                 match = payload
                 break
         base = match or self.DEFAULT_DEPARTURE
-        label = raw_departure or base["name"]
+        label_source = base.get("label", base["name"])
+        label = raw_departure or label_source
         return {
             "name": base["name"],
             "label": label,
@@ -171,14 +185,6 @@ class MapRouteTool(BaseTool):
         distance_km = MapRouteTool._haversine_km(lat1, lng1, lat2, lng2)
         # Assume average driving speed 45 km/h for estimate
         duration_minutes = (distance_km / 45.0) * 60 if distance_km else None
-        polyline = [
-            {"lat": lat1, "lng": lng1},
-            {
-                "lat": (lat1 + lat2) / 2 + 0.01,
-                "lng": (lng1 + lng2) / 2,
-            },
-            {"lat": lat2, "lng": lng2},
-        ]
         bounds = {
             "south": min(lat1, lat2),
             "west": min(lng1, lng2),
@@ -189,7 +195,6 @@ class MapRouteTool(BaseTool):
             "mode": "DRIVING",
             "distance_km": distance_km,
             "duration_minutes": duration_minutes,
-            "polyline": polyline,
             "bounds": bounds,
         }
 

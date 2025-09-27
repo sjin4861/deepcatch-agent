@@ -52,41 +52,36 @@ export default function MapRoutePreview({ metadata }: MapRoutePreviewProps) {
             const container = containerRef.current;
             container.innerHTML = '';
 
-            const departure = metadata.departure;
+            const businesses = metadata.businesses ?? [];
             const arrival = metadata.arrival;
-            const departureLatLng = new kakao.maps.LatLng(departure.lat, departure.lng);
-            const arrivalLatLng = new kakao.maps.LatLng(arrival.lat, arrival.lng);
+
+            const businessPositions = businesses.map(biz => ({
+                biz,
+                point: new kakao.maps.LatLng(biz.lat, biz.lng),
+            }));
+
+            const fallbackCenter = arrival
+                ? new kakao.maps.LatLng(arrival.lat, arrival.lng)
+                : undefined;
+            const initialCenter = businessPositions[0]?.point ?? fallbackCenter;
+
+            if (!initialCenter) {
+                return;
+            }
 
             const map = new kakao.maps.Map(container, {
-                center: departureLatLng,
+                center: initialCenter,
                 level: 8,
             });
 
             const overlays: Array<{ setMap: (mapInstance: any) => void }> = [];
             const bounds = new kakao.maps.LatLngBounds();
-            bounds.extend(departureLatLng);
-            bounds.extend(arrivalLatLng);
+            bounds.extend(initialCenter);
 
-            const departureMarker = new kakao.maps.Marker({
-                position: departureLatLng,
-                map,
-                title: departure.label ?? departure.name,
-            });
-            overlays.push(departureMarker);
-
-            const arrivalMarker = new kakao.maps.Marker({
-                position: arrivalLatLng,
-                map,
-                title: arrival.label ?? arrival.name,
-            });
-            overlays.push(arrivalMarker);
-
-            const businesses = metadata.businesses ?? [];
-            for (const biz of businesses) {
-                const position = new kakao.maps.LatLng(biz.lat, biz.lng);
-                bounds.extend(position);
+            for (const { biz, point } of businessPositions) {
+                bounds.extend(point);
                 const marker = new kakao.maps.Marker({
-                    position,
+                    position: point,
                     map,
                     title: biz.name,
                 });
@@ -94,34 +89,14 @@ export default function MapRoutePreview({ metadata }: MapRoutePreviewProps) {
 
                 if (biz.name || biz.address) {
                     const infoWindow = new kakao.maps.InfoWindow({
-                        content: `\n<div style="padding:6px 8px;font-size:12px;">${biz.name}${biz.address ? `<br/>${biz.address}` : ''}${biz.phone ? `<br/>${biz.phone}` : ''}</div>`,
-                        removable: false,
+                        content: `\n<div style="padding:6px 8px;font-size:12px;">${biz.name}}</div>`,
+                        removable: true,
                     });
                     infoWindow.open(map, marker);
                     overlays.push({
                         setMap: (instance: any) => infoWindow.setMap(instance),
                     });
                 }
-            }
-
-            const pathCoords = metadata.route?.polyline ?? [
-                { lat: departure.lat, lng: departure.lng },
-                { lat: arrival.lat, lng: arrival.lng },
-            ];
-            if (pathCoords.length >= 2) {
-                const path = pathCoords.map(coord => new kakao.maps.LatLng(coord.lat, coord.lng));
-                for (const point of path) {
-                    bounds.extend(point);
-                }
-                const polyline = new kakao.maps.Polyline({
-                    path,
-                    strokeWeight: 5,
-                    strokeColor: '#2563eb',
-                    strokeOpacity: 0.8,
-                    strokeStyle: 'solid',
-                });
-                polyline.setMap(map);
-                overlays.push(polyline);
             }
 
             try {
@@ -207,7 +182,6 @@ export default function MapRoutePreview({ metadata }: MapRoutePreviewProps) {
             )}
             {metadata.businesses.length > 0 && (
                 <div className="rounded-lg border border-border/40 bg-background/60 p-3">
-                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">주변 낚시점</p>
                     <ul className="mt-2 space-y-1 text-xs text-foreground/80">
                         {metadata.businesses.map(biz => (
                             <li key={`${biz.name}-${biz.lat}-${biz.lng}`}>

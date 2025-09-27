@@ -96,7 +96,7 @@ def test_chat_flow_applies_defaults_when_requested():
     plan_payload = planner_metadata.get("plan", {})
     assert plan_payload.get("location") == "구룡포"
     assert plan_payload.get("participants") == 2
-    assert plan_payload.get("departure") == "포항역 집결 04:00 출발"
+    assert plan_payload.get("departure") == "체인지업가든 포항"
     assert plan_payload.get("time") == "새벽 5시 ~ 오전 11시"
 
     map_results = [

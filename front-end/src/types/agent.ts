@@ -41,7 +41,6 @@ export type MapRouteMetadata = {
         mode?: string;
         distance_km?: number;
         duration_minutes?: number;
-        polyline?: Array<{ lat: number; lng: number }>;
         bounds?: {
             south: number;
             west: number;

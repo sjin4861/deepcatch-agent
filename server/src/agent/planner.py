@@ -25,7 +25,7 @@ class PlannerAgent:
     DEFAULT_PLAN_VALUES = {
         "time": "새벽 5시 ~ 오전 11시",
         "participants": 2,
-        "departure": "포항역 집결 04:00 출발",
+    "departure": "체인지업가든 포항",
         "fishing_type": "방파제 낚시",
         "budget": "1인당 150,000원 예상",
         "gear": "현장 대여 + 개인 장비 병행",
