@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Loader2, PhoneCall, Send } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { useTranscription } from '@/context/transcription-context';
+import { useRealtimeConnection } from '@/hooks/useRealtimeConnection';
 import { API_BASE_URL } from '@/lib/config';
 import { useToast } from '@/hooks/use-toast';
 import { useAgentInsights } from '@/context/agent-insights-context';
@@ -85,6 +86,7 @@ export default function Chatbot() {
     const [isCalling, setIsCalling] = useState(false);
     const [isSending, setIsSending] = useState(false);
     const { start, isActive, hasAttempted } = useTranscription();
+    const { isCallActive, callStatus, hasAIStreamingBegun, callEnded } = useRealtimeConnection();
     const { toast } = useToast();
     const { recordToolResults } = useAgentInsights();
     const scrollAreaRef = useRef<HTMLDivElement>(null);
@@ -209,6 +211,7 @@ export default function Chatbot() {
     return (
         <Card className="flex flex-col h-full min-h-[80vh]">
             <CardContent className="flex-1 flex flex-col p-4 gap-4 overflow-hidden">
+                {/* Call Progress Bar 이동: 이제 Live Transcription 패널로 이전됨 */}
                 <ScrollArea className="h-[80vh] pr-4 -mr-4" ref={scrollAreaRef}>
                     <div className="space-y-4">
                         {messages.map((message, index) => (
