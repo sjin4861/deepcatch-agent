@@ -7,6 +7,8 @@ from twilio.base.exceptions import TwilioRestException
 from src.config import settings, logger
 from pydantic import BaseModel, Field
 from typing import Optional, Dict, List
+from uuid import uuid4
+from datetime import datetime
 import os
 import json
 from dotenv import load_dotenv
@@ -39,6 +41,7 @@ openai_client = openai.OpenAI(api_key=settings.openai_api_key)
 # 인메모리 대화 상태 저장소
 conversation_history: Dict[str, List[Dict[str, str]]] = {}
 
+
 class CallRequest(BaseModel):
     to_number: str = Field(..., description="전화를 받을 상대방 번호 (E.164 형식)")
 
@@ -46,6 +49,7 @@ class CallResponse(BaseModel):
     status: str
     call_sid: Optional[str] = None
     message: str
+
 
 @app.post("/call/initiate", response_model=CallResponse)
 async def initiate_call(req: CallRequest):
@@ -57,7 +61,7 @@ async def initiate_call(req: CallRequest):
             to=req.to_number,
             from_=US_PHONENUMBER,
             url=webhook_url,
-            method='POST',
+            method="POST",
             status_callback=f"{URL}/voice/status",
             status_callback_method='POST',
             status_callback_event=['initiated', 'ringing', 'answered', 'completed', 'busy', 'failed', 'no-answer', 'canceled'],
@@ -72,6 +76,7 @@ async def initiate_call(req: CallRequest):
     except Exception as e:
         logger.error(f"통화 시작 중 예상치 못한 오류: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="서버 내부 오류가 발생했습니다.")
+
 
 @app.post("/voice/start")
 async def handle_voice_start(request: Request):
@@ -162,6 +167,7 @@ async def process_speech(request: Request):
 
     return Response(content=str(response), media_type="application/xml")
 
+
 @app.post("/voice/status")
 async def voice_status_callback(request: Request):
     """통화 상태 변경 시 호출되는 웹훅. 통화 종료 시 프론트엔드에 알림."""
@@ -192,7 +198,7 @@ async def voice_status_callback(request: Request):
 from src.realtime_server import socket_app
 app.mount("/socket.io", socket_app)
 
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
-
