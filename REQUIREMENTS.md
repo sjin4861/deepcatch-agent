@@ -33,6 +33,11 @@
 
 - 통화를 통해 얻은 정보 저장
 
+### 1.5 경로 시각화
+
+- 사용자가 출발지를 확정하면 카카오 지도를 통해 구룡포까지의 차량 경로를 보여주기
+- 주변 낚시점 위치를 함께 마킹하여 추가 정보를 제공
+
 ## 2. 간단한 구조
 
 ```
@@ -75,6 +80,9 @@ class Business:
     name: str
     phone: str
     location: str
+    address: str
+    latitude: float
+    longitude: float
 
 # 예약 결과
 class Reservation:
@@ -127,7 +135,7 @@ class Reservation:
 
 ## 7. 필수 파일 구조
 
-```
+```text
 fishing-agent/
 ├── frontend/          # Next.js
 │   ├── pages/
@@ -153,6 +161,8 @@ cd backend && uvicorn main:app --reload --port 8000
 # 프론트엔드 실행  
 cd frontend && npm run dev
 ```
+
+- 카카오 지도 연동을 위해 `frontend/.env.local`에 `NEXT_PUBLIC_KAKAO_MAP_KEY` 값을 설정
 
 ### 운영 환경
 

@@ -7,7 +7,8 @@ import { Badge } from '@/components/ui/badge';
 import { Workflow, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useTranscription } from '@/context/transcription-context';
 import { useAgentInsights } from '@/context/agent-insights-context';
-import type { ToolResult } from '@/types/agent';
+import type { MapRouteMetadata, ToolResult } from '@/types/agent';
+import MapRoutePreview from './map-route-preview';
 
 function formatTimestamp(value: string | undefined) {
     if (!value) return null;
@@ -69,11 +70,27 @@ export default function InformationSummary() {
         return toolResults[activeIndex] ?? null;
     }, [toolResults, activeIndex]);
 
+    const mapMetadata = useMemo(() => {
+        if (!activeResult?.metadata || typeof activeResult.metadata !== 'object') {
+            return null;
+        }
+        const mapValue = (activeResult.metadata as Record<string, unknown>).map;
+        if (
+            mapValue &&
+            typeof mapValue === 'object' &&
+            'departure' in mapValue &&
+            'arrival' in mapValue
+        ) {
+            return mapValue as MapRouteMetadata;
+        }
+        return null;
+    }, [activeResult]);
+
     const metadataEntries = useMemo(() => {
         if (!activeResult?.metadata || typeof activeResult.metadata !== 'object') {
             return [] as Array<[string, unknown]>;
         }
-        return Object.entries(activeResult.metadata);
+        return Object.entries(activeResult.metadata).filter(([key]) => key !== 'map');
     }, [activeResult]);
 
     const hasResults = toolResults.length > 0;
@@ -155,6 +172,9 @@ export default function InformationSummary() {
                             <p className="whitespace-pre-wrap text-sm leading-relaxed text-secondary-foreground">
                                 {activeResult.content}
                             </p>
+                            {mapMetadata && (
+                                <MapRoutePreview metadata={mapMetadata} />
+                            )}
                             {metadataEntries.length > 0 && (
                                 <div className="rounded-xl border border-border/40 bg-background/80 p-3">
                                     <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Details</p>

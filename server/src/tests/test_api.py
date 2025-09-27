@@ -99,6 +99,19 @@ def test_chat_flow_applies_defaults_when_requested():
     assert plan_payload.get("departure") == "포항역 집결 04:00 출발"
     assert plan_payload.get("time") == "새벽 5시 ~ 오전 11시"
 
+    map_results = [
+        result
+        for result in data["toolResults"]
+        if result.get("toolName") == "map_route_generation_api"
+    ]
+    assert map_results, "map_route_generation_api tool result should be present when plan is ready"
+    map_metadata = map_results[0].get("metadata", {})
+    assert "map" in map_metadata
+    route_payload = map_metadata["map"].get("route")
+    assert route_payload is not None
+    assert route_payload.get("mode") == "DRIVING"
+    assert route_payload.get("distance_km")
+
 def test_businesses_list():
     r = client.get("/businesses")
     assert r.status_code == 200

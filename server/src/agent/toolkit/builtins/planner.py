@@ -40,6 +40,9 @@ class PlannerTool(BaseTool):
                 "stage": new_stage,
             }
         )
+        previous_stage = context.state.get("stage")
+        if new_stage == "ready" and previous_stage != "ready":
+            output.follow_up_actions.append("map_route_generation_api")
         output.add_tool_result(
             make_tool_result(
                 tool="planner_agent",

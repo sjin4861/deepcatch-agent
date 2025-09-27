@@ -1,4 +1,4 @@
-name,phone,location
-Guryongpo Fishing,+821041116947,Guryongpo
-Demo Fishing 2,01023456789,부산
-Demo Fishing 3,01034567890,제주
+name,phone,location,latitude,longitude,address
+Guryongpo Fishing,+821041116947,구룡포,35.9896,129.5689,경북 포항시 남구 구룡포읍 구룡포리 138-4
+Demo Fishing 2,01023456789,구룡포,35.9912,129.5651,경북 포항시 남구 구룡포읍 구성리 12-1
+Demo Fishing 3,01034567890,구룡포,35.9873,129.5705,경북 포항시 남구 구룡포읍 석병리 22-9
