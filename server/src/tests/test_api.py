@@ -12,7 +12,7 @@ from agent.planner import planner_agent
 
 client = TestClient(app)
 
-def test_chat_flow_missing_fields():
+def test_chat_flow_missing_fields_without_request():
     mock_payload = {
         "plan_updates": {},
         "missing_information": [
@@ -46,7 +46,52 @@ def test_chat_flow_missing_fields():
     planner_metadata = planner_results[0].get("metadata", {})
     assert "missing" in planner_metadata
     assert isinstance(planner_metadata["missing"], list)
-    assert len(planner_metadata["missing"]) == 0
+    assert set(planner_metadata["missing"]) == {
+        "date",
+        "participants",
+        "departure",
+        "fishing_type",
+        "budget",
+        "gear",
+        "transportation",
+    }
+
+    plan_payload = planner_metadata.get("plan", {})
+    assert plan_payload.get("location") is None
+    assert plan_payload.get("participants") is None
+    assert plan_payload.get("departure") is None
+    assert plan_payload.get("time") is None
+
+
+def test_chat_flow_applies_defaults_when_requested():
+    mock_payload = {
+        "plan_updates": {},
+        "missing_information": [
+            "date",
+            "participants",
+            "departure",
+            "fishing_type",
+            "budget",
+            "gear",
+            "transportation",
+        ],
+        "summary": ["새로운 계획 정보가 감지되지 않았습니다."],
+    }
+
+    with planner_agent.mock_response(mock_payload):
+        r = client.post("/chat", json={"message": "모든 정보를 알아서 채워줘"})
+    assert r.status_code == 200
+    data = r.json()
+
+    planner_results = [
+        result
+        for result in data["toolResults"]
+        if result.get("toolName") == "planner_agent"
+    ]
+    assert planner_results
+
+    planner_metadata = planner_results[0].get("metadata", {})
+    assert planner_metadata.get("missing") == []
 
     plan_payload = planner_metadata.get("plan", {})
     assert plan_payload.get("location") == "구룡포"
