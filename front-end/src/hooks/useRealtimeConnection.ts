@@ -64,6 +64,9 @@ interface UseRealtimeConnectionReturn {
   latestUserSpeech: string; // Twilio 사용자 발화 최신 텍스트
   conversation: ConversationTurn[]; // 멀티턴 대화 (실시간)
   scenarioProgress: ScenarioProgressUpdate | null;
+  hasAIStreamingBegun: boolean;
+  slots: Record<string, any> | null;
+  callEnded: boolean;
   
   // 액션 함수들
   joinCallRoom: (callSid: string) => void;
@@ -99,6 +102,9 @@ export const useRealtimeConnection = (): UseRealtimeConnectionReturn => {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [conversation, setConversation] = useState<ConversationTurn[]>([]);
   const [scenarioProgress, setScenarioProgress] = useState<ScenarioProgressUpdate | null>(null);
+  const [hasAIStreamingBegun, setHasAIStreamingBegun] = useState(false);
+  const [slots, setSlots] = useState<Record<string, any> | null>(null);
+  const [callEnded, setCallEnded] = useState(false);
   
   // Socket 인스턴스 관리
   const socketRef = useRef<Socket | null>(null);
@@ -198,6 +204,7 @@ export const useRealtimeConnection = (): UseRealtimeConnectionReturn => {
       console.log('📴 Twilio 통화 종료 이벤트 수신:', data);
       setIsCallActive(false);
       currentCallSidRef.current = null;
+      setCallEnded(true);
     });
     
     // 실시간 전사 결과 수신
@@ -274,6 +281,7 @@ export const useRealtimeConnection = (): UseRealtimeConnectionReturn => {
     socket.on('ai_response_text', (data: { text_delta: string }) => {
       console.log('🤖 AI 텍스트 델타:', data);
       setAIResponse(prev => prev + data.text_delta);
+      setHasAIStreamingBegun(true);
       setConversation(prev => {
         const delta = data.text_delta ?? '';
         const trimmed = delta.replace(/\r?\n/g, '');
@@ -363,6 +371,7 @@ export const useRealtimeConnection = (): UseRealtimeConnectionReturn => {
       console.log('🚧 AI 응답 시작 이벤트:', data);
       // 직전 assistant 스트리밍이 완료되지 않았다면 그대로 두고, 모두 완료된 상태면 새 placeholder 생성
       setAIResponse('');
+      setHasAIStreamingBegun(true);
       setConversation(prev => {
         if (prev.length > 0) {
           const last = prev[prev.length - 1];
@@ -378,6 +387,16 @@ export const useRealtimeConnection = (): UseRealtimeConnectionReturn => {
           isStreaming: true,
         }];
       });
+    });
+
+    // 슬롯 추출 완료
+    socket.on('call_slots_extracted', (data: { call_sid?: string; slots: Record<string, any> }) => {
+      console.log('🎯 슬롯 추출 완료:', data);
+      setSlots(data.slots || {});
+    });
+
+    socket.on('call_slots_error', (data: { call_sid?: string; error: string }) => {
+      console.warn('⚠️ 슬롯 추출 오류:', data);
     });
     
     // 정리 함수
@@ -423,6 +442,9 @@ export const useRealtimeConnection = (): UseRealtimeConnectionReturn => {
     setConversationState(null);
     setCallError(null);
     setSessionId(null);
+    setHasAIStreamingBegun(false);
+    setSlots(null);
+    setCallEnded(false);
   }, []);
 
   // OpenAI 통화 시작
@@ -497,5 +519,8 @@ export const useRealtimeConnection = (): UseRealtimeConnectionReturn => {
     sendText,
     conversation,
     scenarioProgress,
+    hasAIStreamingBegun,
+    slots,
+    callEnded,
   };
 };
