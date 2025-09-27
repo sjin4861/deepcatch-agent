@@ -6,7 +6,7 @@
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Optional, List
 import httpx
 import os
 from src.config import logger
@@ -29,6 +29,11 @@ API_ENDPOINTS = {
 
 # 서비스 키 (환경변수에서 로드)
 SERVICE_KEY = os.getenv("DPG_SERVICE_KEY", "")
+
+# 날씨 API 설정
+WEATHER_URL = os.getenv("WEATHER_URL", "https://apihub.kma.go.kr/api/typ01/url/fct_shrt_reg.php")
+WEATHER_AUTH_KEY = os.getenv("WEATHER_AUTH_KEY", "")
+WEATHER_CODE_URL = os.getenv("WEATHER_CODE_URL", "https://apihub.kma.go.kr/api/typ01/url/fct_afs_srf.php")
 
 # 실제 API 응답에 맞는 응답 모델들
 class TopData(BaseModel):
@@ -90,6 +95,82 @@ class HarborShipsResponse(BaseModel):
     id: str = Field(..., description="응답상태 고유번호")
     status: str = Field(..., description="응답상태")
     data: dict = Field(..., description="선박 입항 데이터")
+
+# 날씨 API 응답 모델들
+class WeatherForecast(BaseModel):
+    region_code: str = Field(..., description="예보구역코드", alias="REG_ID")
+    start_time: str = Field(..., description="시작시각(년월일시분,KST)", alias="TM_ST")
+    end_time: str = Field(..., description="종료시각(년월일시분,KST)", alias="TM_ED")
+    region_type: str = Field(..., description="특성", alias="REG_SP")
+    region_name: str = Field(..., description="예보구역명", alias="REG_NAME")
+    station_id: str = Field(..., description="발표관서", alias="STN_ID")
+    forecast_time: str = Field(..., description="발표시각(KST)", alias="TM_FC")
+    input_time: str = Field(..., description="입력시각(KST)", alias="TM_IN")
+    reference_number: str = Field(..., description="참조번호", alias="CNT")
+    forecaster_name: str = Field(..., description="예보관명", alias="MAN_FC")
+    effective_time: str = Field(..., description="발효시각(년월일시분,KST)", alias="TM_EF")
+    period_mode: str = Field(..., description="구간 (A01(24시간),A02(12시간))", alias="MOD")
+    effective_number: str = Field(..., description="발효번호", alias="NE")
+    station_name: str = Field(..., description="발표관서", alias="STN")
+    announcement_code: str = Field(..., description="발표코드", alias="C")
+    forecaster_id: str = Field(..., description="예보관ID", alias="MAN_ID")
+    wind_direction_start: str = Field(..., description="풍향1(16방위) (범위 시작값)", alias="W1")
+    wind_direction_trend: str = Field(..., description="풍향경향", alias="T")
+    wind_direction_end: str = Field(..., description="풍향2(16방위) (범위 종료값)", alias="W2")
+    temperature: str = Field(..., description="기온", alias="TA")
+    precipitation_probability: str = Field(..., description="강수확률(%)", alias="ST")
+    sky_condition: str = Field(..., description="하늘상태", alias="SKY")
+    precipitation_type: str = Field(..., description="강수유무", alias="PREP")
+    weather_forecast: str = Field(..., description="예보", alias="WF")
+    wind_speed_start: Optional[str] = Field(None, description="풍속1 (범위 시작값)", alias="S1")
+    wind_speed_end: Optional[str] = Field(None, description="풍속2 (범위 종료값)", alias="S2")
+    wave_height_start: Optional[str] = Field(None, description="파고1 (범위 시작값)", alias="WH1")
+    wave_height_end: Optional[str] = Field(None, description="파고2 (범위 종료값)", alias="WH2")
+    
+    class Config:
+        populate_by_name = True
+
+# 하늘상태 및 강수유무 코드 변환 함수들
+def convert_sky_condition(sky_code: str) -> str:
+    """하늘상태 코드를 한글로 변환"""
+    sky_map = {
+        "DB01": "맑음",
+        "DB02": "구름조금", 
+        "DB03": "구름많음",
+        "DB04": "흐림"
+    }
+    return sky_map.get(sky_code, sky_code)
+
+def convert_precipitation_type(prep_code: str) -> str:
+    """강수유무 코드를 한글로 변환"""
+    prep_map = {
+        "0": "강수없음",
+        "1": "비",
+        "2": "비/눈",
+        "3": "눈", 
+        "4": "눈/비"
+    }
+    return prep_map.get(prep_code, prep_code)
+
+class WeatherResponse(BaseModel):
+    forecasts: List[WeatherForecast] = Field(..., description="날씨 예보 목록")
+    total_count: int = Field(..., description="총 예보 건수")
+    region_name: str = Field(..., description="조회 지역명")
+    forecast_time: str = Field(..., description="예보 발표시각")
+
+# 예보구역 검색용 모델들
+class WeatherRegion(BaseModel):
+    REG_ID: str = Field(..., description="예보구역코드")
+    TM_ST: str = Field(..., description="시작시각(년월일시분,KST)")
+    TM_ED: str = Field(..., description="종료시각(년월일시분,KST)")
+    REG_SP: str = Field(..., description="특성 (A:육상광역,B:육상국지,C:도시,D:산악,E:고속도로,H:해상광역,I:해상국지,J:연안바다,K:해수욕장,L:연안항로,M:먼항로,P:산악)")
+    REG_NAME: str = Field(..., description="예보구역명")
+
+class WeatherRegionResponse(BaseModel):
+    regions: List[WeatherRegion] = Field(..., description="예보구역 목록")
+    total_count: int = Field(..., description="총 구역 수")
+    search_term: Optional[str] = Field(None, description="검색어")
+    region_type: Optional[str] = Field(None, description="구역 특성 필터")
 
 # API 엔드포인트들
 
@@ -613,3 +694,343 @@ def _get_mock_harbor_ships_data(harbor_name: Optional[str] = None) -> HarborShip
             "updated_at": "2025-01-02T08:00:00"
         }
     )
+
+@router.get("/weather/forecast", response_model=WeatherResponse)
+async def get_weather_forecast(
+    reg: Optional[str] = Query(None, description="예보구역코드 (예: 11B20304), 없으면 전체"),
+    stn: Optional[str] = Query(None, description="발표관서번호, 없으면 전체"),
+    tmfc: Optional[str] = Query(None, description="발표시간 (YYYYMMDDHH, KST), 없으면 전체, 0이면 가장 최근"),
+    tmfc1: Optional[str] = Query(None, description="발표시간 시작 (YYYYMMDDHH, KST)"),
+    tmfc2: Optional[str] = Query(None, description="발표시간 종료 (YYYYMMDDHH, KST)"),
+    tmef1: Optional[str] = Query(None, description="발효시간 시작 (YYYYMMDDHH, KST)"),
+    tmef2: Optional[str] = Query(None, description="발효시간 종료 (YYYYMMDDHH, KST)"),
+    disp: int = Query(1, description="표출형태 - 0: 포트란 적합, 1: CSV 적합(기본값)"),
+    help: Optional[int] = Query(None, description="도움말 - 1: 도움말 정보 표시")
+):
+    """
+    기상청 단기예보 API를 통한 날씨 정보 조회
+    CSV 형식 응답을 파싱하여 구조화된 데이터로 반환
+    """
+    try:
+        if not WEATHER_AUTH_KEY:
+            raise HTTPException(status_code=400, detail="WEATHER_AUTH_KEY가 설정되지 않았습니다.")
+        
+        # 기상청 API 헤더 설정
+        headers = {
+            "User-Agent": "Mozilla/5.0 (compatible; DeepCatch-Weather/1.0)",
+            "Accept": "text/csv, text/plain, */*",
+            "Accept-Encoding": "gzip, deflate",
+            "Accept-Language": "ko-KR,ko;q=0.9,en;q=0.8",
+            "Connection": "keep-alive"
+        }
+        
+        async with httpx.AsyncClient(
+            verify=False,
+            timeout=30.0,
+            headers=headers,
+            follow_redirects=True
+        ) as client:
+            # 파라미터 구성 - None이 아닌 값들만 포함
+            params = {
+                "authKey": WEATHER_AUTH_KEY,
+                "disp": disp
+            }
+            
+            # 선택적 파라미터들 추가
+            if reg is not None:
+                params["reg"] = reg
+            if stn is not None:
+                params["stn"] = stn
+            if tmfc is not None:
+                params["tmfc"] = tmfc
+            if tmfc1 is not None:
+                params["tmfc1"] = tmfc1
+            if tmfc2 is not None:
+                params["tmfc2"] = tmfc2
+            if tmef1 is not None:
+                params["tmef1"] = tmef1
+            if tmef2 is not None:
+                params["tmef2"] = tmef2
+            if help is not None:
+                params["help"] = help
+            
+            logger.info(f"Calling KMA weather API: {WEATHER_URL}")
+            logger.info(f"Parameters: {params}")
+            logger.info(f"Full URL with params: {response.url if 'response' in locals() else 'Not available yet'}")
+            
+            response = await client.get(WEATHER_URL, params=params, timeout=30.0)
+            
+            logger.info(f"Weather API Response status: {response.status_code}")
+            logger.info(f"Final URL called: {response.url}")
+            logger.info(f"Response headers: {dict(response.headers)}")
+            logger.info(f"Full response content: {response.text}")
+            logger.info(f"Weather API Response content preview: {response.text[:200]}...")
+            
+            if response.status_code == 200:
+                # 고정폭 형식 응답 파싱
+                content = response.text.strip()
+                
+                # 줄 단위로 분리
+                lines = content.split('\n')
+                if len(lines) < 2:
+                    logger.warning("Invalid format from weather API")
+                    raise HTTPException(status_code=500, detail="기상청 API에서 잘못된 형식을 반환했습니다.")
+                
+                # 데이터 행들을 파싱 (주석과 헤더 라인 제외)
+                forecasts = []
+                data_found = False
+                
+                for line in lines:
+                    line_stripped = line.strip()
+                    # 주석이나 헤더 라인 제외
+                    if not line_stripped or line_stripped.startswith('#') or 'REG_ID' in line_stripped or '7777END' in line_stripped:
+                        continue
+                    
+                    data_found = True
+                    
+                    # 공백으로 구분된 형식 파싱 (실제 응답 형태에 맞춤)
+                    # REG_ID TM_FC TM_EF MOD NE STN C MAN_ID MAN_FC W1 T W2 S1 S2 WH1 WH2 SKY PREP WF
+                    try:
+                        # 공백으로 분리하되 큰따옴표로 둘러싸인 부분은 하나로 처리
+                        import re
+                        # 큰따옴표로 둘러싸인 부분을 찾아서 공백을 임시 문자로 대체
+                        temp_line = line
+                        quoted_parts = re.findall(r'"[^"]*"', temp_line)
+                        for i, quoted in enumerate(quoted_parts):
+                            temp_line = temp_line.replace(quoted, f"__QUOTED_{i}__")
+                        
+                        parts = temp_line.split()
+                        
+                        # 큰따옴표 부분 복원
+                        for i, quoted in enumerate(quoted_parts):
+                            for j, part in enumerate(parts):
+                                if f"__QUOTED_{i}__" in part:
+                                    parts[j] = part.replace(f"__QUOTED_{i}__", quoted.strip('"'))
+                        
+                        if len(parts) >= 19:  # 모든 필드가 있는지 확인
+                            reg_id = parts[0]
+                            tm_fc = parts[1]
+                            tm_ef = parts[2]
+                            mod = parts[3]
+                            ne = parts[4]
+                            stn = parts[5]
+                            c = parts[6]
+                            man_id = parts[7]
+                            man_fc = parts[8]
+                            w1 = parts[9]
+                            t = parts[10]
+                            w2 = parts[11]
+                            s1 = parts[12]
+                            s2 = parts[13]
+                            wh1 = parts[14]
+                            wh2 = parts[15]
+                            sky = parts[16]
+                            prep = parts[17]
+                            wf = ' '.join(parts[18:])  # 나머지는 모두 WF (예보)
+                            
+                            # 유효한 데이터인지 확인
+                            if reg_id and tm_fc and tm_ef:
+                                forecast_data = {
+                                    'REG_ID': reg_id,
+                                    'TM_ST': '',  # 고정폭 형식에서는 제공되지 않음
+                                    'TM_ED': '',  # 고정폭 형식에서는 제공되지 않음
+                                    'REG_SP': '',  # 고정폭 형식에서는 제공되지 않음
+                                    'REG_NAME': '',  # 고정폭 형식에서는 제공되지 않음
+                                    'STN_ID': stn,
+                                    'TM_FC': tm_fc,
+                                    'TM_IN': '',  # 고정폭 형식에서는 제공되지 않음
+                                    'CNT': '',  # 고정폭 형식에서는 제공되지 않음
+                                    'MAN_FC': man_fc,
+                                    'TM_EF': tm_ef,
+                                    'MOD': mod,
+                                    'NE': ne,
+                                    'STN': stn,
+                                    'C': c,
+                                    'MAN_ID': man_id,
+                                    'W1': w1,
+                                    'T': t,
+                                    'W2': w2,
+                                    'TA': '',  # 해상예보에서는 기온 정보가 없을 수 있음
+                                    'ST': '',  # 해상예보에서는 강수확률이 없을 수 있음
+                                    'SKY': convert_sky_condition(sky),  # 한글 변환
+                                    'PREP': convert_precipitation_type(prep),  # 한글 변환
+                                    'WF': wf,
+                                    'S1': s1,
+                                    'S2': s2,
+                                    'WH1': wh1,
+                                    'WH2': wh2
+                                }
+                                forecast = WeatherForecast(**forecast_data)
+                                forecasts.append(forecast)
+                    except Exception as parse_e:
+                        logger.debug(f"Failed to parse forecast line: {line[:50]}... Error: {parse_e}")
+                        continue
+                
+                # 데이터가 없는 경우 체크
+                if not data_found or len(forecasts) == 0:
+                    logger.warning("No forecast data found in API response")
+                    logger.warning(f"API Response was: {content}")
+                    
+                    # help=1로 다시 호출해서 사용법 확인
+                    try:
+                        help_params = {"disp": 0, "authKey": WEATHER_AUTH_KEY, "help": 1}
+                        help_response = await client.get(WEATHER_URL, params=help_params, timeout=10.0)
+                        if help_response.status_code == 200:
+                            logger.info(f"API Help response: {help_response.text}")
+                    except Exception as help_e:
+                        logger.debug(f"Failed to get help: {help_e}")
+                    
+                    raise HTTPException(status_code=404, detail="요청한 조건에 맞는 예보 데이터가 없습니다. API 파라미터나 날짜를 확인해주세요.")
+                
+                # 응답 구성
+                region_name = reg or "Unknown"
+                forecast_time = forecasts[0].forecast_time if forecasts else ""
+                
+                return WeatherResponse(
+                    forecasts=forecasts,
+                    total_count=len(forecasts),
+                    region_name=region_name,
+                    forecast_time=forecast_time
+                )
+            else:
+                logger.error(f"Weather API error: {response.status_code}, content: {response.text}")
+                raise HTTPException(status_code=response.status_code, detail=f"기상청 API 오류: {response.text}")
+                
+    except httpx.RequestError as e:
+        logger.error(f"Weather API request error: {e}")
+        raise HTTPException(status_code=500, detail=f"기상청 API 연결 오류: {str(e)}")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Weather API unexpected error: {e}")
+        raise HTTPException(status_code=500, detail="날씨 API 서버 내부 오류")
+
+
+@router.get("/weather/regions", response_model=WeatherRegionResponse)
+async def get_weather_regions(
+    search: Optional[str] = Query(None, description="예보구역명 검색어 (예: 포항, 바다, 해상)"),
+    reg_sp: Optional[str] = Query(None, description="구역 특성 필터 (A:육상광역, H:해상광역, J:연안바다 등)")
+):
+    """
+    기상청 단기예보구역 조회 및 검색
+    예보구역코드와 이름을 조회하여 날씨 API 호출에 필요한 정보 제공
+    """
+    try:
+        if not WEATHER_AUTH_KEY:
+            raise HTTPException(status_code=400, detail="WEATHER_AUTH_KEY가 설정되지 않았습니다.")
+        
+        # 기상청 API 헤더 설정
+        headers = {
+            "User-Agent": "Mozilla/5.0 (compatible; DeepCatch-Weather/1.0)",
+            "Accept": "text/csv, text/plain, */*",
+            "Accept-Encoding": "gzip, deflate",
+            "Accept-Language": "ko-KR,ko;q=0.9,en;q=0.8",
+            "Connection": "keep-alive"
+        }
+        
+        async with httpx.AsyncClient(
+            verify=False,
+            timeout=30.0,
+            headers=headers,
+            follow_redirects=True
+        ) as client:
+            # WEATHER_AUTH_KEY를 사용하여 파라미터 구성 (disp=0으로 고정폭 형식 요청)
+            params = {"disp": 0, "authKey": WEATHER_AUTH_KEY}
+            url_to_call = WEATHER_CODE_URL
+            
+            logger.info(f"Calling KMA weather regions API: {url_to_call}")
+            
+            response = await client.get(url_to_call, params=params, timeout=30.0)
+            
+            logger.info(f"Weather Regions API Response status: {response.status_code}")
+            logger.info(f"Weather Regions API Response content preview: {response.text[:200]}...")
+            
+            if response.status_code == 200:
+                # 고정폭 형식 응답 파싱 (disp=0)
+                content = response.text.strip()
+                
+                # 줄 단위로 분리
+                lines = content.split('\n')
+                if len(lines) < 2:
+                    logger.warning("Invalid format from weather regions API")
+                    raise HTTPException(status_code=500, detail="기상청 API에서 잘못된 형식을 반환했습니다.")
+                
+                # 데이터 행들을 파싱 (주석과 헤더 라인 제외)
+                all_regions = []
+                for line in lines:
+                    line_stripped = line.strip()
+                    # 주석이나 헤더 라인 제외
+                    if not line_stripped or line_stripped.startswith('#') or 'REG_ID' in line_stripped:
+                        continue
+                    
+                    # 고정폭 형식 파싱
+                    # REG_ID(8자) TM_ST(12자) TM_ED(12자) REG_SP(6자) REG_NAME(나머지)
+                    # 11000000 199001010000 210012310000 A      육상
+                    try:
+                        if len(line) >= 40:  # 최소 길이 확인
+                            reg_id = line[0:8].strip()
+                            tm_st = line[9:21].strip()
+                            tm_ed = line[22:34].strip()
+                            reg_sp = line[35:41].strip()
+                            reg_name = line[42:].strip() if len(line) > 42 else ""
+                            
+                            # 유효한 데이터인지 확인
+                            if reg_id and tm_st and tm_ed and reg_sp and reg_name:
+                                region = WeatherRegion(
+                                    REG_ID=reg_id,
+                                    TM_ST=tm_st,
+                                    TM_ED=tm_ed,
+                                    REG_SP=reg_sp,
+                                    REG_NAME=reg_name
+                                )
+                                all_regions.append(region)
+                    except Exception as parse_e:
+                        logger.debug(f"Failed to parse fixed-width line: {line[:50]}... Error: {parse_e}")
+                        continue
+                
+                # 필터링 적용
+                filtered_regions = all_regions
+                
+                # 구역 특성 필터 (reg_sp)
+                if reg_sp:
+                    filtered_regions = [r for r in filtered_regions if r.REG_SP == reg_sp.upper()]
+                
+                # 검색어 필터 (search)
+                if search:
+                    search_lower = search.lower()
+                    filtered_regions = [
+                        r for r in filtered_regions 
+                        if search_lower in r.REG_NAME.lower()
+                    ]
+                
+                # 동일한 지역명에 대해 최신 설정만 유지 (TM_ST 기준으로 정렬 후 최신것만)
+                region_latest = {}
+                for region in filtered_regions:
+                    key = f"{region.REG_NAME}_{region.REG_SP}"
+                    if key not in region_latest or region.TM_ST > region_latest[key].TM_ST:
+                        region_latest[key] = region
+                
+                # 최신 설정만 포함된 리스트로 변경
+                filtered_regions = list(region_latest.values())
+                
+                # TM_ST 기준으로 내림차순 정렬 (최신순)
+                filtered_regions.sort(key=lambda x: x.TM_ST, reverse=True)
+                
+                return WeatherRegionResponse(
+                    regions=filtered_regions,
+                    total_count=len(filtered_regions),
+                    search_term=search,
+                    region_type=reg_sp
+                )
+            else:
+                logger.error(f"Weather Regions API error: {response.status_code}, content: {response.text}")
+                raise HTTPException(status_code=response.status_code, detail=f"기상청 구역 API 오류: {response.text}")
+                
+    except httpx.RequestError as e:
+        logger.error(f"Weather Regions API request error: {e}")
+        raise HTTPException(status_code=500, detail=f"기상청 구역 API 연결 오류: {str(e)}")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Weather Regions API unexpected error: {e}")
+        raise HTTPException(status_code=500, detail="날씨 구역 API 서버 내부 오류")

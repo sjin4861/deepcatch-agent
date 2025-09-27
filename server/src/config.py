@@ -56,6 +56,9 @@ class Settings(BaseSettings):
     
     # 외부 API 설정 
     dpg_service_key: str | None = None  # DPG_SERVICE_KEY 
+    weather_url: str | None = None      # WEATHER_URL
+    weather_auth_key: str | None = None # WEATHER_AUTH_KEY
+    weather_code_url: str | None = None # WEATHER_CODE_URL
     
     class Config:
         env_file = ".env"
