@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 from typing import Optional, List
 import httpx
 import os
+from urllib.parse import unquote
 from src.config import logger
 
 # 라우터 생성
@@ -27,8 +28,38 @@ API_ENDPOINTS = {
     "harbor_ships_status": "/harbor/ships/status",          # 선박 입항 정보 (INT-S3-001)
 }
 
-# 서비스 키 (환경변수에서 로드)
-SERVICE_KEY = os.getenv("DPG_SERVICE_KEY", "")
+# 서비스 키 (환경변수에서 로드 & 퍼센트 인코딩 해제)
+RAW_SERVICE_KEY = os.getenv("DPG_SERVICE_KEY", "") or ""
+DECODED_SERVICE_KEY = unquote(RAW_SERVICE_KEY)
+
+def get_service_key(prefer_decoded: bool = True) -> str:
+    """서비스 키를 반환.
+    - prefer_decoded=True 이면 퍼센트 인코딩을 해제한 값 우선 사용
+    - 두 값이 동일한 경우 그대로 반환
+    """
+    if prefer_decoded:
+        return DECODED_SERVICE_KEY
+    return RAW_SERVICE_KEY
+
+def service_key_variants() -> list[str]:  # 순회용
+    if RAW_SERVICE_KEY == DECODED_SERVICE_KEY:
+        return [RAW_SERVICE_KEY]
+    return [DECODED_SERVICE_KEY, RAW_SERVICE_KEY]
+
+
+def _maybe_dump_fishery_payload(data: dict, *, label: str) -> None:
+    """디버깅 용도로 payload 를 로컬 파일에 저장 (환경변수 FISHERY_DEBUG_DUMP=true 일 때).
+    파일명: .fishery_debug_<label>.json (마지막 덮어쓰기)"""
+    if os.getenv("FISHERY_DEBUG_DUMP", "false").lower() not in ("true", "1", "yes"):  # pragma: no cover
+        return
+    try:
+        import json, pathlib, datetime as _dt
+        path = pathlib.Path(".fishery_debug_" + label + ".json")
+        payload = {"ts": _dt.datetime.utcnow().isoformat() + "Z", "data": data}
+        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        logger.info(f"[fishery-dump] wrote {path}")
+    except Exception as e:  # pragma: no cover
+        logger.debug(f"fishery dump failed: {e}")
 
 # 날씨 API 설정
 WEATHER_URL = os.getenv("WEATHER_URL", "https://apihub.kma.go.kr/api/typ01/url/fct_shrt_reg.php")
@@ -184,11 +215,15 @@ async def get_ship_safe_stats_history(
     """
     try:
         # 서비스 키 검증
-        if not SERVICE_KEY or SERVICE_KEY == "":
+        # 서비스 키 확보 (디코드/원본 순차 시도)
+        if not RAW_SERVICE_KEY:
             logger.warning("DPG_SERVICE_KEY not set or empty, using mock data")
             return _get_mock_weather_data(date)
-        
-        logger.info(f"Using SERVICE_KEY: {SERVICE_KEY[:10]}{'*' * (len(SERVICE_KEY) - 10) if len(SERVICE_KEY) > 10 else ''}")
+        logger.info(
+            "Using SERVICE_KEY decoded=%s raw_preview=%s",
+            DECODED_SERVICE_KEY != RAW_SERVICE_KEY,
+            f"{RAW_SERVICE_KEY[:10]}{'*' * max(0,len(RAW_SERVICE_KEY)-10)}" if RAW_SERVICE_KEY else "<empty>"
+        )
         
         # HTTPS 요청을 위한 추가 설정
         headers = {
@@ -206,50 +241,62 @@ async def get_ship_safe_stats_history(
             headers=headers,
             follow_redirects=True  # 리다이렉트 자동 추적
         ) as client:
-            params = {
-                "serviceKey": SERVICE_KEY,
-                "date": date
-            }
-            
-            # URL 인코딩 문제 해결을 위해 수동으로 URL 구성
-            url = f"{BASE_API_URL}{API_ENDPOINTS['ship_safe_stats_history']}"
-            
-            # 로그에 실제 호출 URL 전체 출력
-            logger.info(f"Calling external API: {url}")
-            logger.info(f"Service Key (first 15 chars): {SERVICE_KEY[:15]}...")
-            logger.info(f"Date parameter: {date}")
-            
-            response = await client.get(
-                url,
-                params=params,
-                timeout=30.0
-            )
-            
-            logger.info(f"API Response status: {response.status_code}")
-            logger.info(f"API Response content: {response.text[:500]}...")
-            
-            if response.status_code == 200:
-                data = response.json()
-                logger.info(f"Successfully parsed JSON data: {data}")
-                
-                # 실제 API 응답 형식에 맞게 데이터 변환
-                if "data" in data and "top" in data["data"]:
-                    # 실제 응답에 맞는 데이터가 있는지 확인
-                    top_data = data["data"]["top"]
-                    if top_data:  # top 데이터가 비어있지 않은 경우
+            last_error_text = None
+            key_variants = service_key_variants()
+            for idx, key_variant in enumerate(key_variants):
+                params = {"serviceKey": key_variant, "date": date}
+                url = f"{BASE_API_URL}{API_ENDPOINTS['ship_safe_stats_history']}"
+                logger.info(
+                    "Calling external API attempt=%s key_variant=%s url=%s date=%s",
+                    idx + 1,
+                    "decoded" if key_variant == DECODED_SERVICE_KEY and RAW_SERVICE_KEY != DECODED_SERVICE_KEY else "raw",
+                    url,
+                    date,
+                )
+                response = await client.get(url, params=params, timeout=30.0)
+                logger.info(f"API Response status: {response.status_code}")
+                preview = response.text[:300]
+                logger.info(f"API Response content: {preview}...")
+                if response.status_code == 200:
+                    try:
+                        data = response.json()
+                    except Exception:
+                        logger.warning("JSON parse failed, fallback to mock")
+                        break
+                    # 성공 형식 추정: {"id":"1","status":"success","data":{"top":{...}}}
+                    top_data = (data.get("data") or {}).get("top") if isinstance(data, dict) else None
+                    if top_data and isinstance(top_data, dict) and len(top_data) > 0:
+                        # 디버그 dump
+                        _maybe_dump_fishery_payload(data, label="ship_safe_success")
                         return ShipSafeStatsResponse(**data)
                     else:
-                        logger.warning("API returned empty top data, using mock data")
+                        logger.warning(
+                            "API returned empty top data (attempt=%s variant=%s). will %s",
+                            idx + 1,
+                            "decoded" if key_variant == DECODED_SERVICE_KEY and RAW_SERVICE_KEY != DECODED_SERVICE_KEY else "raw",
+                            "try alternate variant" if idx + 1 < len(key_variants) else "fallback to mock",
+                        )
+                        # 빈 top & 다음 variant 남아 있으면 계속, 아니면 mock
+                        if idx + 1 < len(key_variants):
+                            continue
+                        _maybe_dump_fishery_payload(data, label="ship_safe_empty_top")
                         return _get_mock_weather_data(date)
-                else:
-                    # 예상과 다른 응답 형식인 경우 로그 남기고 mock 데이터 반환
                     logger.warning(f"Unexpected API response format: {data}")
+                    _maybe_dump_fishery_payload(data, label="ship_safe_unexpected")
                     return _get_mock_weather_data(date)
-            else:
-                logger.error(f"External API error: {response.status_code}, content: {response.text}")
-                # 실제 API 실패 시 모의 데이터로 fallback
-                logger.info("Falling back to mock data due to API error")
-                return _get_mock_weather_data(date)
+                else:
+                    last_error_text = response.text
+                    # 401 & invalid key 메시지이면 다음 variant 시도
+                    if response.status_code == 401 and "유효하지 않은" in response.text and idx == 0 and len(service_key_variants()) > 1:
+                        logger.warning("First key variant rejected (401 invalid). Trying alternate encoding variant...")
+                        continue
+                    logger.error(
+                        "External API error final status=%s content=%s", response.status_code, preview
+                    )
+                    break
+            # 실패 → mock 사용
+            logger.info("Falling back to mock data due to API error (%s)", last_error_text)
+            return _get_mock_weather_data(date)
                 
     except httpx.RequestError as e:
         logger.error(f"Request error: {e}")
@@ -308,7 +355,7 @@ async def get_environment_info():
             "FISHERY_API_DEV_MODE": os.getenv("FISHERY_API_DEV_MODE", "not_set"),
             "DPG_SERVICE_KEY_SET": bool(os.getenv("DPG_SERVICE_KEY")),
             "DPG_SERVICE_KEY_LENGTH": len(os.getenv("DPG_SERVICE_KEY", "")),
-            "DPG_SERVICE_KEY_PREVIEW": f"{SERVICE_KEY[:10]}{'*' * max(0, len(SERVICE_KEY) - 10)}" if SERVICE_KEY else "not_set"
+            "DPG_SERVICE_KEY_PREVIEW": f"{RAW_SERVICE_KEY[:10]}{'*' * max(0, len(RAW_SERVICE_KEY) - 10)}" if RAW_SERVICE_KEY else "not_set"
         },
         "current_settings": {
             "BASE_API_URL": BASE_API_URL,
@@ -328,7 +375,7 @@ async def test_api_key_validity():
     """
     API 키 유효성 테스트 (실제 API 호출 없이)
     """
-    if not SERVICE_KEY or SERVICE_KEY == "":
+    if not RAW_SERVICE_KEY or RAW_SERVICE_KEY == "":
         return {
             "status": "error",
             "message": "API 키가 설정되지 않았습니다.",
@@ -341,11 +388,11 @@ async def test_api_key_validity():
     
     # API 키 기본 형식 검증
     key_analysis = {
-        "length": len(SERVICE_KEY),
-        "contains_special_chars": any(c in SERVICE_KEY for c in "!@#$%^&*()"),
-        "is_alphanumeric": SERVICE_KEY.replace("%", "").isalnum(),
-        "starts_with": SERVICE_KEY[:3] if len(SERVICE_KEY) >= 3 else SERVICE_KEY,
-        "preview": f"{SERVICE_KEY[:10]}{'*' * max(0, len(SERVICE_KEY) - 10)}"
+        "length": len(RAW_SERVICE_KEY),
+        "contains_special_chars": any(c in RAW_SERVICE_KEY for c in "!@#$%^&*()"),
+        "is_alphanumeric": RAW_SERVICE_KEY.replace("%", "").isalnum(),
+        "starts_with": RAW_SERVICE_KEY[:3] if len(RAW_SERVICE_KEY) >= 3 else RAW_SERVICE_KEY,
+        "preview": f"{RAW_SERVICE_KEY[:10]}{'*' * max(0, len(RAW_SERVICE_KEY) - 10)}"
     }
     
     return {
@@ -362,7 +409,7 @@ async def test_raw_api_call():
     """
     test_date = "20250102"
     
-    if not SERVICE_KEY:
+    if not RAW_SERVICE_KEY:
         return {"error": "SERVICE_KEY not set"}
     
     try:
@@ -386,7 +433,7 @@ async def test_raw_api_call():
             test_results = {}
             
             # 방법 1: Query Parameter로 serviceKey 전달
-            params1 = {"serviceKey": SERVICE_KEY, "date": test_date}
+            params1 = {"serviceKey": DECODED_SERVICE_KEY, "date": test_date}
             url1 = f"{BASE_API_URL}{API_ENDPOINTS['ship_safe_stats_history']}"
             
             try:
@@ -401,7 +448,7 @@ async def test_raw_api_call():
                 test_results["method1_query_params"] = {"error": str(e)}
             
             # 방법 2: URL에 직접 포함
-            url2 = f"{BASE_API_URL}{API_ENDPOINTS['ship_safe_stats_history']}?serviceKey={SERVICE_KEY}&date={test_date}"
+            url2 = f"{BASE_API_URL}{API_ENDPOINTS['ship_safe_stats_history']}?serviceKey={DECODED_SERVICE_KEY}&date={test_date}"
             
             try:
                 response2 = await client.get(url2, timeout=10.0)
@@ -415,7 +462,7 @@ async def test_raw_api_call():
                 test_results["method2_url_direct"] = {"error": str(e)}
             
             # 방법 3: Header로 전달
-            headers3 = {"Authorization": f"Bearer {SERVICE_KEY}"}
+            headers3 = {"Authorization": f"Bearer {DECODED_SERVICE_KEY}"}
             params3 = {"date": test_date}
             
             try:
@@ -431,9 +478,9 @@ async def test_raw_api_call():
             
             return {
                 "service_key_info": {
-                    "length": len(SERVICE_KEY),
-                    "preview": f"{SERVICE_KEY[:10]}***{SERVICE_KEY[-5:]}" if len(SERVICE_KEY) > 15 else "***",
-                    "contains_special": any(c in "!@#$%^&*()+={}[]|\\:;\"'<>,.?/" for c in SERVICE_KEY)
+                    "length": len(RAW_SERVICE_KEY),
+                    "preview": f"{RAW_SERVICE_KEY[:10]}***{RAW_SERVICE_KEY[-5:]}" if len(RAW_SERVICE_KEY) > 15 else "***",
+                    "contains_special": any(c in "!@#$%^&*()+={}[]|\\:;\"'<>,.?/" for c in RAW_SERVICE_KEY)
                 },
                 "test_results": test_results,
                 "recommendations": [
@@ -455,7 +502,7 @@ async def get_ship_safe_stats_history_raw(
     실제 API 응답 그대로 반환 (디버깅 및 실제 데이터 확인용)
     """
     try:
-        if not SERVICE_KEY:
+        if not RAW_SERVICE_KEY:
             raise HTTPException(status_code=400, detail="DPG_SERVICE_KEY not configured")
         
         # 최적화된 HTTPS 헤더 설정
@@ -474,7 +521,7 @@ async def get_ship_safe_stats_history_raw(
             follow_redirects=True
         ) as client:
             # method2 방식 사용 (테스트에서 성공한 방식)
-            url = f"{BASE_API_URL}{API_ENDPOINTS['ship_safe_stats_history']}?serviceKey={SERVICE_KEY}&date={date}"
+            url = f"{BASE_API_URL}{API_ENDPOINTS['ship_safe_stats_history']}?serviceKey={DECODED_SERVICE_KEY}&date={date}"
             
             logger.info(f"Calling raw API: {url[:100]}...")
             response = await client.get(url, timeout=30.0)
@@ -506,7 +553,7 @@ async def get_catch_history(
     특정 품목과 관련된 과거 어획 데이터를 선박 단위로 조회 (INT-S3-007)
     """
     try:
-        if not SERVICE_KEY:
+        if not RAW_SERVICE_KEY:
             logger.warning("DPG_SERVICE_KEY not set, using mock data")
             return _get_mock_catch_history_data(fish_type, start_date, end_date, ship_id)
         
@@ -525,7 +572,7 @@ async def get_catch_history(
             headers=headers,
             follow_redirects=True
         ) as client:
-            params = {"serviceKey": SERVICE_KEY}
+            params = {"serviceKey": DECODED_SERVICE_KEY}
             if fish_type:
                 params["fish_type"] = fish_type
             if start_date:
@@ -566,7 +613,7 @@ async def get_harbor_ships_status(
     실시간 선박 입항 및 하역 구역, 총 어획량 정보 조회 (INT-S3-001)
     """
     try:
-        if not SERVICE_KEY:
+        if not RAW_SERVICE_KEY:
             logger.warning("DPG_SERVICE_KEY not set, using mock data")
             return _get_mock_harbor_ships_data(harbor_name)
         
@@ -585,7 +632,7 @@ async def get_harbor_ships_status(
             headers=headers,
             follow_redirects=True
         ) as client:
-            params = {"serviceKey": SERVICE_KEY}
+            params = {"serviceKey": DECODED_SERVICE_KEY}
             if harbor_name:
                 params["harbor_name"] = harbor_name
             

@@ -67,6 +67,8 @@ class WeatherReport:
     tide: str
     best_window: str
     summary: str
+    tide_phase: Optional[str] = None  # 예: 사리, 조금, 중간
+    moon_age: Optional[float] = None  # 음력 일령 (0~29.53)
 
     def as_tool_result(self) -> ChatToolResult:
         lines = [
@@ -77,6 +79,8 @@ class WeatherReport:
             f"추천 시간대: {self.best_window}",
             self.summary,
         ]
+        if self.tide_phase:
+            lines.insert(4, f"물때 단계: {self.tide_phase} (음력 {self.moon_age:.1f}일)" if self.moon_age is not None else f"물때 단계: {self.tide_phase}")
         return make_tool_result(
             tool="weather_tide",
             title="구룡포 날씨/물때 정보",
