@@ -9,9 +9,20 @@ from pydantic import BaseModel, Field
 from typing import Optional, Dict, List, Any, Tuple
 from uuid import uuid4
 from datetime import datetime
+
 import os
 import json
 from dotenv import load_dotenv
+
+from sqlalchemy.orm import Session
+# 지침에 따른 데이터베이스 연결
+from .database import get_db, engine
+from . import models, crud
+from .agent import ChatRequest, ChatResponse, PlanAgent
+
+# 데이터베이스 테이블 생성
+models.Base.metadata.create_all(bind=engine)
+
 import openai
 from src.realtime_server import sio
 
@@ -168,6 +179,9 @@ class CallResponse(BaseModel):
     call_sid: Optional[str] = None
     message: str
 
+
+fishing_handler = FishingCallHandler()
+plan_agent = PlanAgent()
 
 @app.post("/call/initiate", response_model=CallResponse)
 async def initiate_call(req: CallRequest):
