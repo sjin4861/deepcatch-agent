@@ -7,9 +7,16 @@ import { Badge } from '@/components/ui/badge';
 import { Workflow, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useTranscription } from '@/context/transcription-context';
 import { useAgentInsights } from '@/context/agent-insights-context';
-import type { MapRouteMetadata, ToolResult } from '@/types/agent';
+import type {
+    MapRouteMetadata,
+    ToolResult,
+    FisheryCatchMetadata,
+    FisheryCatchTopSpecies,
+    FisheryCatchTimelinePoint,
+} from '@/types/agent';
 import MapRoutePreview from './map-route-preview';
 import { useLocale } from '@/context/locale-context';
+import FisherySeasonChart from './fishery-season-chart';
 
 function formatTimestamp(value: string | undefined, locale: string) {
     if (!value) return null;
@@ -92,7 +99,36 @@ export default function InformationSummary() {
         if (!activeResult?.metadata || typeof activeResult.metadata !== 'object') {
             return [] as Array<[string, unknown]>;
         }
-        return Object.entries(activeResult.metadata).filter(([key]) => key !== 'map');
+        const hiddenKeys = new Set(['map', 'chartTimeline', 'chartSeries', 'records']);
+        return Object.entries(activeResult.metadata).filter(([key]) => !hiddenKeys.has(key));
+    }, [activeResult]);
+
+    const fisheryChartData = useMemo(() => {
+        if (!activeResult || activeResult.toolName !== 'fishery_catch') {
+            return null;
+        }
+
+        const metadata = activeResult.metadata as FisheryCatchMetadata | null | undefined;
+        if (!metadata) {
+            return null;
+        }
+
+        const timeline = Array.isArray(metadata.chartTimeline)
+            ? (metadata.chartTimeline as FisheryCatchTimelinePoint[])
+            : [];
+        if (timeline.length === 0) {
+            return null;
+        }
+
+        const topSpecies = Array.isArray(metadata.topSpecies)
+            ? (metadata.topSpecies as FisheryCatchTopSpecies[])
+            : [];
+
+        return {
+            analysisRange: typeof metadata.analysisRange === 'string' ? metadata.analysisRange : undefined,
+            timeline,
+            topSpecies,
+        };
     }, [activeResult]);
 
     const hasResults = toolResults.length > 0;
@@ -187,6 +223,13 @@ export default function InformationSummary() {
                             </p>
                             {mapMetadata && (
                                 <MapRoutePreview metadata={mapMetadata} />
+                            )}
+                            {fisheryChartData && (
+                                <FisherySeasonChart
+                                    analysisRange={fisheryChartData.analysisRange}
+                                    timeline={fisheryChartData.timeline}
+                                    topSpecies={fisheryChartData.topSpecies}
+                                />
                             )}
                         </div>
 

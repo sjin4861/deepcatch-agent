@@ -89,7 +89,9 @@ class OpenAIChatClient:
             "reasoning": {"effort": "minimal"},
         }
         if response_format is not None:
-            params["response_format"] = response_format
+            logger.debug(
+                "Responses API response_format not supported; ignoring structured output request."
+            )
 
         response = self._client.responses.create(**params)
         text = getattr(response, "output_text", None)

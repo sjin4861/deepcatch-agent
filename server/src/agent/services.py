@@ -4,8 +4,8 @@ import json
 import os
 import re
 from dataclasses import dataclass
-from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional
+from datetime import datetime, timedelta, date
+from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 from sqlalchemy.orm import Session
 
@@ -21,6 +21,10 @@ try:  # pragma: no cover - guard for packaging / circular import
     from . import call_runtime
 except Exception:  # pragma: no cover
     call_runtime = None  # type: ignore
+
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from src.fishery_api import CatchHistoryResponse
 
 
 @dataclass
@@ -230,6 +234,29 @@ class AgentServices:
             sid=call_data.get("sid"),
             message=message,
             phone=business.phone,
+        )
+
+    # ----------------------------------------------------------------------------------
+    # External fishery data integrations
+    # ----------------------------------------------------------------------------------
+    def fetch_catch_history_range(
+        self,
+        *,
+        start_date: date,
+        end_date: date,
+        fish_type: Optional[str] = None,
+        ship_id: Optional[str] = None,
+    ) -> "CatchHistoryResponse":
+        from src import fishery_api
+
+        start_text = start_date.strftime("%Y%m%d")
+        end_text = end_date.strftime("%Y%m%d")
+
+        return fishery_api.fetch_catch_history_data(
+            fish_type=fish_type,
+            start_date=start_text,
+            end_date=end_text,
+            ship_id=ship_id,
         )
 
     # ------------------------------------------------------------------

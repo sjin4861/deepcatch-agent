@@ -1,12 +1,12 @@
 from .call import CallTool
-from .fish import FishInsightsTool
+from .fishery_catch import FisheryCatchTool
+from .map_route import MapRouteTool
 from .planner import PlannerTool
 from .weather import WeatherTool
-from .map_route import MapRouteTool
 
 __all__ = [
     "CallTool",
-    "FishInsightsTool",
+    "FisheryCatchTool",
     "PlannerTool",
     "WeatherTool",
     "MapRouteTool",
@@ -18,7 +18,7 @@ __all__ = [
 def default_tools():
     return [
         WeatherTool(),
-        FishInsightsTool(),
+        FisheryCatchTool(),
         PlannerTool(),
         MapRouteTool(),
         CallTool(),

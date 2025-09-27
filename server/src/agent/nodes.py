@@ -26,8 +26,53 @@ def determine_actions(message: str, missing_keys: List[str]) -> List[str]:
     actions: List[str] = []
     if any(keyword in lowered for keyword in ["weather", "tide", "날씨", "물때", "기상"]):
         actions.append("weather")
-    if any(keyword in lowered for keyword in ["fish", "어종", "조황", "물고기"]):
-        actions.append("fish")
+    fishery_primary = [
+        "어획",
+        "어획량",
+        "catch history",
+        "catch data",
+        "fishing yield",
+        "제철",
+        "peak season",
+        "시즌",
+        "fish",
+        "어종",
+        "조황",
+        "물고기",
+    ]
+    fishery_secondary = [
+        "작년",
+        "지난해",
+        "동기간",
+        "연휴",
+        "holiday",
+        "추석",
+        "기간",
+        "이번 주",
+    "이번주",
+        "다음 주",
+    "다음주",
+        "요즘",
+    ]
+    if (
+        any(keyword in lowered for keyword in fishery_primary)
+        or (
+            any(
+                keyword in lowered
+                for keyword in [
+                    "잡히",
+                    "잡혀",
+                    "잘 잡",
+                    "많이 잡",
+                    "most caught",
+                    "best fish",
+                    "yield",
+                ]
+            )
+            and any(keyword in lowered for keyword in fishery_secondary)
+        )
+    ) and "fishery_catch" not in actions:
+        actions.append("fishery_catch")
     if any(keyword in lowered for keyword in ["plan", "계획", "예약", "인원", "budget", "예산"]):
         actions.append("planner")
     if any(keyword in lowered for keyword in ["call", "전화", "연결", "예약해", "contact"]):
@@ -193,8 +238,8 @@ def compose_response_node(state: ConversationState) -> ConversationState:
                 summary_lines.append(f"- 목표 어종: {plan.target_species}")
         if state.get("weather"):
             summary_lines.append("- 날씨/물때 정보가 도구 결과에 포함되어 있어요.")
-        if state.get("fish_info"):
-            summary_lines.append("- 최신 어종 상황을 함께 확인했습니다.")
+        if state.get("fishery_catch"):
+            summary_lines.append("- 최근 어획량 추세를 분석한 결과를 함께 보여드렸어요.")
         summary_lines.append("전화 연결을 원하시면 말씀만 해주세요!")
         message = "\n".join(summary_lines)
         call_suggested = "call" not in actions
@@ -204,7 +249,7 @@ def compose_response_node(state: ConversationState) -> ConversationState:
     if client.enabled:
         plan_dict = plan.to_dict() if isinstance(plan, FishingPlanDetails) else {}
         weather_dict = asdict(state["weather"]) if state.get("weather") else {}
-        fish_dict = asdict(state["fish_info"]) if state.get("fish_info") else {}
+        fishery_dict = asdict(state["fishery_catch"]) if state.get("fishery_catch") else {}
         call_dict = call_summary.to_dict() if call_summary else {}
 
         try:
@@ -223,8 +268,8 @@ def compose_response_node(state: ConversationState) -> ConversationState:
                                 "plan": plan_dict,
                                 "missing": missing,
                                 "weather": weather_dict,
-                                "fish": fish_dict,
                                 "call": call_dict,
+                                "fisheryCatch": fishery_dict,
                                 "call_suggested": call_suggested,
                                 "fallback": message,
                             },
