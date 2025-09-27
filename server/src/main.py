@@ -1,5 +1,5 @@
 # main.py - 낚시 예약 AI 에이전트
-from fastapi import FastAPI, Request, Form, HTTPException, Response, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request, Form, HTTPException, Response, WebSocket, WebSocketDisconnect, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from twilio.twiml.voice_response import VoiceResponse, Gather
 from twilio.rest import Client
@@ -180,8 +180,29 @@ class CallResponse(BaseModel):
     message: str
 
 
-fishing_handler = FishingCallHandler()
 plan_agent = PlanAgent()
+@app.post("/chat", response_model=ChatResponse)
+async def chat_message(payload: ChatRequest, db: Session = Depends(get_db)):
+    """사용자 메시지를 받아 여행 계획 정보를 업데이트하고 응답합니다."""
+
+    message_text = payload.message.strip()
+    if not message_text:
+        return ChatResponse(
+            message="어떤 여행을 계획 중이신가요? 날짜와 인원수를 알려주시면 도와드릴게요!",
+        )
+
+    logger.info("채팅 메시지 수신: %s", message_text)
+
+    try:
+        response = plan_agent(message=message_text, db=db)
+        return response
+
+    except Exception as exc:
+        logger.exception("채팅 처리 중 오류 발생")
+        raise HTTPException(
+            status_code=500,
+            detail=f"채팅 처리 중 오류가 발생했습니다: {exc}",
+        )
 
 @app.post("/call/initiate", response_model=CallResponse)
 async def initiate_call(req: CallRequest):
