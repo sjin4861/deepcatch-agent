@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import sessionmaker, declarative_base
 import os
 import csv
@@ -16,6 +16,7 @@ engine = create_engine(
 )
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
+logger = logging.getLogger(__name__)
 
 def _normalize_location(raw: str | None) -> str:
     if not raw:
@@ -113,3 +114,16 @@ def get_db():
         yield db
     finally:
         db.close()
+
+
+def run_migrations() -> None:
+    """Ensure database schema matches the latest models without manual resets."""
+    with engine.begin() as connection:
+        inspector = inspect(connection)
+        if "plans" not in inspector.get_table_names():
+            return
+
+        plan_columns = {column["name"] for column in inspector.get_columns("plans")}
+        if "departure" not in plan_columns:
+            logger.info("Adding missing 'departure' column to plans table")
+            connection.execute(text("ALTER TABLE plans ADD COLUMN departure VARCHAR"))

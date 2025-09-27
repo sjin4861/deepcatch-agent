@@ -29,6 +29,15 @@ class BusinessSelection:
     candidates: List[orm_models.Business]
 
 
+def _coerce_int(value: Any) -> Optional[int]:
+    if value is None or value == "":
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
 class AgentServices:
     """Domain-facing operations shared across conversation tools and flows."""
 
@@ -59,6 +68,20 @@ class AgentServices:
                             for key in FishingPlanDetails().__dict__.keys()
                         }
                     )
+                    legacy_total = plan_payload.get("participants_total")
+                    if details.participants is None and legacy_total is not None:
+                        try:
+                            details.participants = int(legacy_total)
+                        except (TypeError, ValueError):
+                            details.participants = None
+                    if details.participants is None:
+                        adults = plan_payload.get("participants_adults")
+                        children = plan_payload.get("participants_children")
+                        adult_val = _coerce_int(adults)
+                        child_val = _coerce_int(children)
+                        combined = (adult_val or 0) + (child_val or 0)
+                        if combined > 0:
+                            details.participants = combined
                 call_payload = payload.get("call")
                 if isinstance(call_payload, dict):
                     call_summary = CallSummary(**call_payload)
@@ -69,10 +92,10 @@ class AgentServices:
             details.date = plan.date
         if plan.time and not details.time:
             details.time = plan.time
-        if plan.people and not details.participants_total:
-            details.participants_total = plan.people
-        if plan.phone_user and not details.phone_user:
-            details.phone_user = plan.phone_user
+        if plan.people is not None and details.participants is None:
+            details.participants = plan.people
+        if plan.departure and not details.departure:
+            details.departure = plan.departure
 
         return PlanSnapshot(
             record=plan,

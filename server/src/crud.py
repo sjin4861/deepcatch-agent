@@ -2,7 +2,7 @@ from sqlalchemy.orm import Session
 from . import models, schemas
 from typing import List, Optional
 
-REQUIRED_FIELDS = ["date", "time", "people", "location", "phone_user"]
+REQUIRED_FIELDS = ["date", "time", "people", "location", "departure"]
 
 def get_plan(db: Session) -> models.Plan:
     plan = db.query(models.Plan).first()

@@ -174,13 +174,10 @@ def compose_response_node(state: ConversationState) -> ConversationState:
             summary_lines.append(f"- 날짜: {plan.date or '미정'}")
             if plan.time:
                 summary_lines.append(f"- 시간: {plan.time}")
-            if plan.participants_adults is not None or plan.participants_children is not None:
-                summary_lines.append(
-                    "- 인원: 성인 {}명 / 어린이 {}명".format(
-                        plan.participants_adults or 0,
-                        plan.participants_children or 0,
-                    )
-                )
+            if getattr(plan, "departure", None):
+                summary_lines.append(f"- 출발지: {plan.departure}")
+            if getattr(plan, "participants", None) is not None:
+                summary_lines.append(f"- 인원: {plan.participants}명")
             if plan.fishing_type:
                 summary_lines.append(f"- 방식: {plan.fishing_type}")
             if plan.budget:

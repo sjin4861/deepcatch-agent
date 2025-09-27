@@ -16,7 +16,7 @@ from dotenv import load_dotenv
 
 from sqlalchemy.orm import Session
 # 지침에 따른 데이터베이스 연결
-from .database import get_db, engine, seed_businesses_if_needed, reseed_businesses
+from .database import get_db, engine, seed_businesses_if_needed, reseed_businesses, SessionLocal, run_migrations
 from . import models, crud
 from .agent import ChatRequest, ChatResponse, PlanAgent
 from .agent.services import AgentServices
@@ -25,10 +25,24 @@ from .agent.call_test_flow import run_call_flow
 
 # 데이터베이스 테이블 생성
 models.Base.metadata.create_all(bind=engine)
-try:
-    seed_businesses_if_needed()
-except Exception as se:
-    logger.warning(f"비즈니스 시드 실패: {se}")
+run_migrations()
+
+
+def clear_persistent_data() -> None:
+    """서버 시작 시 모든 영속 데이터를 초기화합니다."""
+    session = SessionLocal()
+    try:
+        session.query(models.Reservation).delete()
+        session.query(models.Plan).delete()
+        session.query(models.Business).delete()
+        session.commit()
+        logger.info("데이터베이스 초기화 완료: reservations, plans, businesses 테이블을 비웠습니다.")
+    except Exception:
+        session.rollback()
+        logger.exception("데이터베이스 초기화 중 오류가 발생했습니다.")
+        raise
+    finally:
+        session.close()
 
 import openai
 from src.realtime_server import sio
@@ -42,6 +56,11 @@ app = FastAPI(
     description="Twilio와 OpenAI를 사용한 실시간 음성 대화 시스템",
     version="2.0.0"
 )
+
+
+@app.on_event("startup")
+def on_startup() -> None:
+    clear_persistent_data()
 
 app.add_middleware(
     CORSMiddleware,
