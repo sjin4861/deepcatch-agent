@@ -271,22 +271,59 @@ export default function RealtimeTranscription() {
                         {dialing ? 'Dialing…' : 'Test Call'}
                     </Button>
                 </div>
-                {callStatus && (
-                    <div className="mt-2 text-[10px] text-muted-foreground">Twilio Status: {callStatus.status}</div>
-                )}
-                {/* 통화 진행 바 */}
-                <div className="mt-2">
-                    <div className="w-full rounded border px-3 py-1.5 flex flex-wrap gap-3 items-center bg-muted/40">
-                        <span className="text-[11px] font-medium">{callStatus ? `Call: ${callStatus.status}` : 'Call: idle'}</span>
-                        <span className="text-[11px] text-muted-foreground">Elapsed: {callStartTime ? formatElapsed(elapsed) : '0:00'}</span>
-                        {callStatus?.data?.error_code && (
-                            <span className="text-[11px] text-destructive">Err: {callStatus.data.error_code}</span>
-                        )}
-                        {!callStartTime && callStatus && (
-                            <span className="text-[11px] text-muted-foreground">Waiting answer…</span>
-                        )}
+                {/* Call Progress Bar (이전 Chatbot 위치에서 이동) */}
+                {(isCallActive || callStatus || conversation.length > 0) && (
+                    <div className="mt-4 w-full bg-secondary/60 rounded-lg p-3 shadow-inner border border-border/60">
+                        <div className="flex items-center justify-between mb-2">
+                            <span className="text-xs font-medium">Call Progress</span>
+                            <span className="text-[10px] text-muted-foreground">
+                                {callStatus?.status || (isCallActive ? 'in-progress' : 'idle')}
+                            </span>
+                        </div>
+                        {(() => {
+                            const endStatuses = ['completed','busy','failed','no-answer','canceled'];
+                            const st = (callStatus?.status||'').toLowerCase();
+                            const dialing = !!callStatus && ['initiated','ringing'].includes(st) || (!callStatus && isCallActive && !conversation.length);
+                            const connected = ['in-progress','answered'].includes(st);
+                            const streamingAssistant = conversation.some(t => t.role==='assistant' && t.isStreaming);
+                            const anyAssistantTurn = conversation.some(t => t.role==='assistant');
+                            const calling = (connected || anyAssistantTurn) && !endStatuses.includes(st) && !dialing;
+                            const done = callStatus ? endStatuses.includes(st) : false;
+                            const steps = [dialing, connected, calling, done];
+                            let activeCount = steps.filter(Boolean).length;
+                            if (done) activeCount = steps.length; // force full
+                            const percent = done ? 100 : Math.min(99, Math.max(0, (activeCount - 1) / (steps.length - 1) * 100));
+                            const labels = ['Dialing','Connected','Calling','Done'];
+                            return (
+                                <div>
+                                    <div className="relative h-3 rounded-full bg-muted overflow-hidden mb-2">
+                                        <div className="absolute left-0 top-0 h-full bg-primary transition-all" style={{ width: `${percent}%` }} />
+                                        <div className="absolute inset-0 flex justify-between items-center px-0">
+                                            {steps.map((on, idx) => (
+                                                <div key={idx} className={`h-4 w-4 rounded-full border-2 transition-colors ${on ? 'bg-primary border-primary' : 'bg-background border-muted-foreground/30'}`} />
+                                            ))}
+                                        </div>
+                                    </div>
+                                    <div className="flex justify-between text-[9px] font-medium tracking-wide text-muted-foreground">
+                                        {labels.map(l => <span key={l} className="w-12 text-center">{l}</span>)}
+                                    </div>
+                                </div>
+                            );
+                        })()}
+                        <div className="mt-2 flex flex-wrap gap-3 items-center">
+                            <span className="text-[10px] text-muted-foreground">Elapsed: {callStartTime ? formatElapsed(elapsed) : '0:00'}</span>
+                            {callStatus?.data?.error_code && (
+                                <span className="text-[10px] text-destructive">Err: {callStatus.data.error_code}</span>
+                            )}
+                            {!callStartTime && callStatus && (
+                                <span className="text-[10px] text-muted-foreground">Waiting answer…</span>
+                            )}
+                            {callStatus && (
+                                <span className="text-[10px] text-muted-foreground">SID: {callStatus.call_sid?.slice(-8)}</span>
+                            )}
+                        </div>
                     </div>
-                </div>
+                )}
                 {lastCallSid && (
                     <div className="mt-1 text-[10px] text-muted-foreground">Call SID: {lastCallSid}</div>
                 )}
