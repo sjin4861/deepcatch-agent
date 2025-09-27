@@ -41,6 +41,10 @@ class ChatResponse(BaseModel):
         default=False,
         description="모든 정보가 수집되어 전화 연결 제안을 하는지 여부",
     )
+    stage: str | None = Field(
+        default=None,
+        description="현재 전체 대화/플랜 진행 단계 (collecting|ready|calling|completed 등)",
+    )
 
 
 class AgentMessage(BaseModel):
