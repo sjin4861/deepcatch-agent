@@ -104,6 +104,8 @@ def tool_runner_node(state: ConversationState) -> ConversationState:
     tool_results = [*state.get("tool_results", [])]
     action_queue = list(state.get("action_queue", []))
     updates: Dict[str, Any] = {}
+    # Track if plan_details already explicitly set by a tool to avoid multiple writes
+    plan_details_written = False
 
     for tool in registry.by_action_sequence(action_queue):
         context = ToolContext(services=services, state={**state, **updates})
@@ -112,6 +114,9 @@ def tool_runner_node(state: ConversationState) -> ConversationState:
 
         output = tool.execute(context)
         updates.update(output.updates)
+        # If this tool produced plan_details mark it so we don't overwrite later
+        if "plan_details" in output.updates:
+            plan_details_written = True
         tool_results.extend(output.tool_results)
 
         for action in output.follow_up_actions:
@@ -124,7 +129,8 @@ def tool_runner_node(state: ConversationState) -> ConversationState:
             updates["plan_snapshot"] = snapshot
     if "plan_record" not in updates and "plan_snapshot" in updates:
         updates["plan_record"] = updates["plan_snapshot"].record
-    if "plan_details" not in updates and "plan_snapshot" in updates:
+    # Provide plan_details only if not already set this step to prevent concurrent multi-value assignment
+    if not plan_details_written and "plan_details" not in updates and "plan_snapshot" in updates:
         updates["plan_details"] = updates["plan_snapshot"].details
     if "stage" not in updates and "plan_snapshot" in updates:
         updates["stage"] = updates["plan_snapshot"].stage
@@ -236,5 +242,6 @@ def compose_response_node(state: ConversationState) -> ConversationState:
             message=generated_message,
             toolResults=tool_results,
             callSuggested=call_suggested,
+            stage=state.get("stage"),
         )
     }
