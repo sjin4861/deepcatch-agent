@@ -51,6 +51,9 @@ class Settings(BaseSettings):
     scenario_dir: str | None = None    # SCENARIO_DIR
     scenario_id: str | None = None     # SCENARIO_ID
     
+    # 외부 API 설정 
+    dpg_service_key: str | None = None  # DPG_SERVICE_KEY 
+    
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"

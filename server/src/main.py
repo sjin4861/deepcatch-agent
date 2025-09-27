@@ -25,6 +25,7 @@ models.Base.metadata.create_all(bind=engine)
 
 import openai
 from src.realtime_server import sio
+from src.fishery_api import router as fishery_router
 
 load_dotenv()
 US_PHONENUMBER = os.getenv("US_PHONENUMBER")
@@ -180,7 +181,6 @@ class CallResponse(BaseModel):
     message: str
 
 
-fishing_handler = FishingCallHandler()
 plan_agent = PlanAgent()
 
 @app.post("/call/initiate", response_model=CallResponse)
@@ -476,6 +476,9 @@ async def voice_status_callback(request: Request):
 
 # --- 기존의 복잡한 WebSocket 및 미디어 스트리밍 관련 코드는 모두 제거 ---
 
+# 어획량 API 라우터 등록
+app.include_router(fishery_router)
+
 # Socket.IO 앱 마운트 (realtime_server.py에서 가져옴)
 from src.realtime_server import socket_app
 app.mount("/socket.io", socket_app)
@@ -483,4 +486,25 @@ app.mount("/socket.io", socket_app)
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    from src.ssl_generator import generate_self_signed_cert
+    import os
+    
+    # SSL 인증서 생성
+    cert_file, key_file = generate_self_signed_cert()
+    
+    # HTTPS 사용 여부 환경변수로 제어 (기본값: True)
+    use_ssl = os.getenv("USE_SSL", "true").lower() in ("true", "1", "yes")
+    
+    if use_ssl:
+        print(f"Starting HTTPS server with SSL certificate: {cert_file}")
+        uvicorn.run(
+            app, 
+            host="0.0.0.0", 
+            port=8000,
+            ssl_keyfile=key_file,
+            ssl_certfile=cert_file,
+            ssl_version=3,  # TLS 1.2+
+        )
+    else:
+        print("Starting HTTP server (SSL disabled)")
+        uvicorn.run(app, host="0.0.0.0", port=8000)
