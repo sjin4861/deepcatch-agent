@@ -28,6 +28,8 @@ class Settings(BaseSettings):
     
     # OpenAI 설정
     openai_api_key: str
+    openai_model: str | None = None
+    openai_temperature: float | None = None
     openai_realtime_model: str = "gpt-4o-realtime-preview-2024-10-01"
     openai_realtime_voice: str = "alloy"
     openai_realtime_temperature: float = 0.7
@@ -50,6 +52,7 @@ class Settings(BaseSettings):
     scenario_mode: bool | None = None  # SCENARIO_MODE
     scenario_dir: str | None = None    # SCENARIO_DIR
     scenario_id: str | None = None     # SCENARIO_ID
+    scenario_auto_feed_all: bool = True  # SCENARIO_AUTO_FEED_ALL: True면 streaming 루프 한 번에 모든 assistant_lines 공급
     
     # 외부 API 설정 
     dpg_service_key: str | None = None  # DPG_SERVICE_KEY 
@@ -67,6 +70,23 @@ class Settings(BaseSettings):
 
 # 전역 설정 인스턴스
 settings = Settings()
+
+# 시나리오 경로 기본값 자동 설정 (환경변수 미설정 시)
+if not settings.scenario_dir:
+    # 우선 server/data/scenarios (프로젝트 루트 기준) 탐색
+    candidate_paths = [
+        os.path.join(os.getcwd(), 'data', 'scenarios'),              # server/data/scenarios (현재 src/config.py 기준 cwd=server)
+        os.path.join(os.getcwd(), 'server', 'data', 'scenarios'),    # 루트에서 실행될 경우
+    ]
+    for c in candidate_paths:
+        if os.path.isdir(c):
+            settings.scenario_dir = c
+            break
+    if not settings.scenario_dir:
+        # 마지막 폴백: src/data/scenarios
+        maybe = os.path.join(os.path.dirname(__file__), 'data', 'scenarios')
+        if os.path.isdir(maybe):
+            settings.scenario_dir = maybe
 
 def setup_logging() -> logging.Logger:
     """로깅 설정을 초기화하고 logger 반환"""

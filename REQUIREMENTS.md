@@ -65,17 +65,18 @@ POST /reservation - 예약 결과 저장
 # 사용자 계획
 class Plan:
     date: str
-    people: int  
+    time: str
+    people: int
     location: str
-    phone_user: str
+    departure: str
 
 # 낚시집 정보
 class Business:
     name: str
     phone: str
     location: str
-    
-# 예약 결과  
+
+# 예약 결과
 class Reservation:
     success: bool
     business_name: str

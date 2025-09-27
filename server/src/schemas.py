@@ -6,7 +6,7 @@ class PlanBase(BaseModel):
     time: Optional[str] = None
     people: Optional[int] = None
     location: Optional[str] = None
-    phone_user: Optional[str] = None
+    departure: Optional[str] = None
 
 class PlanCreate(PlanBase):
     pass

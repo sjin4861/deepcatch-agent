@@ -208,8 +208,8 @@ export default function Chatbot() {
 
     return (
         <Card className="flex flex-col h-full min-h-[80vh]">
-            <CardContent className="flex-1 flex flex-col p-4 gap-4">
-                <ScrollArea className="flex-1 pr-4 -mr-4" ref={scrollAreaRef}>
+            <CardContent className="flex-1 flex flex-col p-4 gap-4 overflow-hidden">
+                <ScrollArea className="h-[80vh] pr-4 -mr-4" ref={scrollAreaRef}>
                     <div className="space-y-4">
                         {messages.map((message, index) => (
                             <div key={message.id ?? index} className={`flex ${message.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
@@ -220,7 +220,7 @@ export default function Chatbot() {
                                             {message.text}
                                         </span>
                                     ) : (
-                                        message.text
+                                        <span className="whitespace-pre-line break-words">{message.text}</span>
                                     )}
                                 </div>
                             </div>
@@ -262,7 +262,7 @@ export default function Chatbot() {
                             )}
                         </div>
                     )}
-                </ScrollArea>
+                    </ScrollArea>
                 <div className="flex gap-2">
                     <Input
                         placeholder="Type a message..."
