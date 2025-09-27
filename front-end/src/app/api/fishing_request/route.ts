@@ -34,8 +34,8 @@ function parseFishingRequest(request: string): { date: string; time: string; peo
 
 export async function POST(req: NextRequest) {
     try {
-        const body = await req.json();
-        const { to_phone, business_name, fishing_request } = body;
+    const body = await req.json();
+    const { to_phone, business_name, fishing_request, scenario_id } = body;
 
         if (!to_phone || !business_name || !fishing_request) {
             return NextResponse.json({ message: 'Missing required fields' }, { status: 400 });
@@ -43,16 +43,36 @@ export async function POST(req: NextRequest) {
 
         const parsedRequest = parseFishingRequest(fishing_request);
 
-        const backendRequestBody = {
+        // 백엔드 /call/initiate 는 현재 to_number, scenario_id 만 사용 (추가 필드는 무시되지만 forward 유지)
+        const backendRequestBody: Record<string, any> = {
             to_number: to_phone,
             business_name: business_name,
             fishing_request: {
                 ...parsedRequest,
-                fishing_type: "바다낚시", // Assuming default
+                fishing_type: "바다낚시",
             }
         };
+        if (scenario_id) {
+            backendRequestBody.scenario_id = scenario_id;
+        }
 
-        const backendUrl = `${process.env.NEXT_PUBLIC_API_URL}/call/initiate`;
+        // --- API Base URL 결정 로직 ---
+        // 우선순위: NEXT_PUBLIC_API_URL > NEXT_PUBLIC_API_BASE_URL > localhost 기본값
+        const rawBase = (process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000').trim();
+        // 끝 슬래시 제거
+        const base = rawBase.replace(/\/$/, '');
+        let backendUrl = `${base}/call/initiate`;
+
+        // URL 유효성 검증 (개발 중 잘못된 문자열 방지)
+        try {
+            // eslint-disable-next-line no-new
+            new URL(backendUrl);
+        } catch (e) {
+            console.error('[fishing_request] Invalid backend URL computed:', backendUrl, 'from base:', rawBase);
+            return NextResponse.json({ message: 'Invalid backend URL configuration', backendUrl }, { status: 500 });
+        }
+
+    console.log('[fishing_request] POST →', backendUrl, 'scenario_id=', scenario_id);
 
         const backendResponse = await fetch(backendUrl, {
             method: 'POST',
