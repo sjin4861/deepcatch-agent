@@ -53,6 +53,11 @@ class Settings(BaseSettings):
     scenario_dir: str | None = None    # SCENARIO_DIR
     scenario_id: str | None = None     # SCENARIO_ID
     scenario_auto_feed_all: bool = True  # SCENARIO_AUTO_FEED_ALL: True면 streaming 루프 한 번에 모든 assistant_lines 공급
+    scenario_auto_hangup: bool = True   # SCENARIO_AUTO_HANGUP: 시나리오 완료 후 자동으로 통화 종료
+    scenario_closing_prompt: str | None = None  # 시나리오 종료 후 마지막 마무리 멘트 생성을 위한 LLM 프롬프트 (없으면 기본 고정 멘트)
+    scenario_stream_chunk_delay_ms: int = 50  # 각 시나리오 delta 사이 지연 (UI 가시적 스트리밍)
+    scenario_min_stream_chunks: int = 2       # 마지막 줄이라도 최소 분할 개수 보장
+    scenario_final_pause_seconds: int = 1     # 마지막 시나리오 발화 후 Hangup 전 Pause (Twilio가 TTS 마무리 & UI 이벤트 수신 시간 확보)
     
     # 외부 API 설정 
     dpg_service_key: str | None = None  # DPG_SERVICE_KEY 
