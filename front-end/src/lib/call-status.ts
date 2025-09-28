@@ -16,6 +16,16 @@ const STATUS_KEY_MAP: Record<string, TranslationKey> = {
     noanswer: 'transcription.status.no-answer',
     canceled: 'transcription.status.canceled',
     cancelled: 'transcription.status.canceled',
+    connecting: 'transcription.status.in-progress',
+    'connecting-openai': 'transcription.status.in-progress',
+    'media-connected': 'transcription.status.in-progress',
+    'stream-started': 'transcription.status.in-progress',
+    'speech-started': 'transcription.status.in-progress',
+    'speech-stopped': 'transcription.status.in-progress',
+    'ai-response-complete': 'transcription.status.in-progress',
+    'openai-session-created': 'transcription.status.in-progress',
+    'media-disconnected': 'transcription.status.completed',
+    'openai-error': 'transcription.status.failed',
 };
 
 export function localizeCallStatus(status: string | null | undefined, t: TranslateFn): string {

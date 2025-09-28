@@ -10,10 +10,11 @@ import { io, Socket } from 'socket.io-client';
 
 // Socket.IO 이벤트 타입 정의
 interface CallStatusUpdate {
-  call_sid: string;
-  status: string;
-  timestamp: string;
-  data: Record<string, any>;
+  call_sid?: string | null;
+  status?: string | null;
+  timestamp?: string | null;
+  data?: Record<string, any> | null;
+  message?: string | null;
 }
 
 interface TranscriptionUpdate {
@@ -146,11 +147,51 @@ export const useRealtimeConnection = (): UseRealtimeConnectionReturn => {
       console.log('✅ 서버 연결 확인:', data);
     });
     
-    // 통화 상태 업데이트 수신
-    socket.on('call_status_update', (data: CallStatusUpdate) => {
-      console.log('📞 통화 상태 업데이트:', data);
-      setCallStatus(data);
-    });
+    const interpretCallStatus = (incoming: CallStatusUpdate) => {
+      console.log('📞 통화 상태 이벤트:', incoming);
+
+      const statusText = typeof incoming.status === 'string' && incoming.status.trim().length > 0
+        ? incoming.status
+        : undefined;
+      const messageText = typeof incoming.message === 'string' && incoming.message.trim().length > 0
+        ? incoming.message
+        : undefined;
+
+      const merged: CallStatusUpdate = {
+        call_sid: incoming.call_sid ?? currentCallSidRef.current,
+        status: statusText ?? null,
+        timestamp: incoming.timestamp ?? new Date().toISOString(),
+        data: incoming.data ?? null,
+        message: messageText ?? null,
+      };
+
+      setCallStatus(merged);
+
+      const normalized = (statusText || '')
+        .toString()
+        .trim()
+        .toLowerCase()
+        .replace(/_/g, '-');
+
+      if (!normalized) {
+        return;
+      }
+
+      const finalKeywords = ['completed', 'failed', 'no-answer', 'canceled', 'cancelled', 'busy', 'ended', 'disconnected', 'error'];
+      const isFinal = finalKeywords.some(keyword => normalized.includes(keyword));
+      if (isFinal) {
+        setIsCallActive(false);
+        return;
+      }
+
+      setIsCallActive(true);
+    };
+
+    // 통화 상태 업데이트 수신 (Twilio webhook 기반)
+    socket.on('call_status_update', interpretCallStatus);
+
+    // OpenAI 실시간 브리지에서 전달되는 상태 이벤트도 수신
+    socket.on('call_status', interpretCallStatus);
 
     // Twilio: 사용자 발화 (server emits 'user_speech')
     socket.on('user_speech', (data: { text: string }) => {

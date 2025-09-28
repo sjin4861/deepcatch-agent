@@ -69,23 +69,81 @@ class WeatherReport:
     summary: str
     tide_phase: Optional[str] = None  # 예: 사리, 조금, 중간
     moon_age: Optional[float] = None  # 음력 일령 (0~29.53)
+    holiday_range: Optional[str] = None
+    holiday_days: List[Dict[str, Any]] = field(default_factory=list)
+    holiday_chart: List[Dict[str, Any]] = field(default_factory=list)
+    holiday_best: Optional[Dict[str, Any]] = None
+    holiday_advisories: List[str] = field(default_factory=list)
+    holiday_source: Optional[str] = None
 
     def as_tool_result(self) -> ChatToolResult:
-        lines = [
-            f"일자: {self.target_date}",
-            f"일출: {self.sunrise}",
-            f"바람: {self.wind}",
-            f"물때: {self.tide}",
-            f"추천 시간대: {self.best_window}",
-            self.summary,
-        ]
+        lines: List[str] = []
+
+        if self.holiday_range:
+            lines.append(f"{self.holiday_range} 기상/물때 요약")
+
+        lines.extend(
+            [
+                f"일자: {self.target_date}",
+                f"일출: {self.sunrise}",
+                f"바람: {self.wind}",
+                f"물때: {self.tide}",
+                f"추천 시간대: {self.best_window}",
+                self.summary,
+            ]
+        )
         if self.tide_phase:
-            lines.insert(4, f"물때 단계: {self.tide_phase} (음력 {self.moon_age:.1f}일)" if self.moon_age is not None else f"물때 단계: {self.tide_phase}")
+            lines.insert(
+                4,
+                f"물때 단계: {self.tide_phase} (음력 {self.moon_age:.1f}일)"
+                if self.moon_age is not None
+                else f"물때 단계: {self.tide_phase}"
+            )
+
+        if self.holiday_best:
+            lines.append("")
+            lines.append(
+                f"추천 날짜: {self.holiday_best.get('label')} ({self.holiday_best.get('date')})"
+            )
+            reason = self.holiday_best.get("reason")
+            if reason:
+                lines.append(f"- 이유: {reason}")
+
+        if self.holiday_days:
+            lines.append("")
+            lines.append("연휴별 핵심 지표:")
+            for day in self.holiday_days:
+                wind_speed = day.get("windSpeed")
+                wave_height = day.get("waveHeight")
+                summary = day.get("summary")
+                label = day.get("label") or day.get("date")
+                bullet = f"- {label}: 풍속 {wind_speed}m/s, 파고 {wave_height}m"
+                if summary:
+                    bullet += f", {summary}"
+                lines.append(bullet)
+
+        if self.holiday_advisories:
+            lines.append("")
+            lines.append("참고 사항:")
+            for note in self.holiday_advisories:
+                lines.append(f"- {note}")
+
+        metadata = asdict(self)
+        if self.holiday_range or self.holiday_days:
+            metadata["holidayOverview"] = {
+                "rangeLabel": self.holiday_range,
+                "days": self.holiday_days,
+                "chart": self.holiday_chart,
+                "best": self.holiday_best,
+                "advisories": self.holiday_advisories,
+                "source": self.holiday_source,
+            }
+
         return make_tool_result(
             tool="weather_tide",
             title="구룡포 날씨/물때 정보",
             content="\n".join(lines),
-            metadata=asdict(self),
+            metadata=metadata,
         )
 
 

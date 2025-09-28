@@ -13,10 +13,13 @@ import type {
     FisheryCatchMetadata,
     FisheryCatchTopSpecies,
     FisheryCatchTimelinePoint,
+    WeatherToolMetadata,
+    WeatherHolidayOverview,
 } from '@/types/agent';
 import MapRoutePreview from './map-route-preview';
 import { useLocale } from '@/context/locale-context';
 import FisherySeasonChart from './fishery-season-chart';
+import HolidayWeatherWidget from './holiday-weather-widget';
 
 function formatTimestamp(value: string | undefined, locale: string) {
     if (!value) return null;
@@ -100,6 +103,25 @@ export default function InformationSummary() {
             return [] as Array<[string, unknown]>;
         }
         const hiddenKeys = new Set(['map', 'chartTimeline', 'chartSeries', 'records']);
+        if (activeResult.toolName === 'weather_tide') {
+            [
+                'holidayOverview',
+                'holiday_range',
+                'holiday_days',
+                'holiday_chart',
+                'holiday_best',
+                'holiday_advisories',
+                'holiday_source',
+                'target_date',
+                'sunrise',
+                'wind',
+                'tide',
+                'best_window',
+                'summary',
+                'tide_phase',
+                'moon_age',
+            ].forEach(key => hiddenKeys.add(key));
+        }
         return Object.entries(activeResult.metadata).filter(([key]) => !hiddenKeys.has(key));
     }, [activeResult]);
 
@@ -128,6 +150,46 @@ export default function InformationSummary() {
             analysisRange: typeof metadata.analysisRange === 'string' ? metadata.analysisRange : undefined,
             timeline,
             topSpecies,
+        };
+    }, [activeResult]);
+
+    const weatherOverview = useMemo(() => {
+        if (!activeResult || activeResult.toolName !== 'weather_tide') {
+            return null;
+        }
+
+        const metadata = activeResult.metadata as WeatherToolMetadata | null | undefined;
+        if (!metadata || typeof metadata !== 'object') {
+            return null;
+        }
+
+        const overviewRaw = metadata.holidayOverview;
+        if (!overviewRaw || typeof overviewRaw !== 'object') {
+            return null;
+        }
+
+        const overviewObject = overviewRaw as WeatherHolidayOverview;
+        const overview: WeatherHolidayOverview = {
+            rangeLabel: typeof overviewObject.rangeLabel === 'string' ? overviewObject.rangeLabel : null,
+            days: Array.isArray(overviewObject.days) ? overviewObject.days : [],
+            chart: Array.isArray(overviewObject.chart) ? overviewObject.chart : [],
+            best: overviewObject.best ?? undefined,
+            advisories: Array.isArray(overviewObject.advisories)
+                ? overviewObject.advisories.filter((note): note is string => typeof note === 'string')
+                : [],
+            source: typeof overviewObject.source === 'string' ? overviewObject.source : null,
+        };
+
+        return {
+            overview,
+            targetDate: typeof metadata.target_date === 'string' ? metadata.target_date : undefined,
+            sunrise: typeof metadata.sunrise === 'string' ? metadata.sunrise : undefined,
+            wind: typeof metadata.wind === 'string' ? metadata.wind : undefined,
+            tide: typeof metadata.tide === 'string' ? metadata.tide : undefined,
+            tidePhase: typeof metadata.tide_phase === 'string' ? metadata.tide_phase : undefined,
+            moonAge: typeof metadata.moon_age === 'number' ? metadata.moon_age : undefined,
+            bestWindow: typeof metadata.best_window === 'string' ? metadata.best_window : undefined,
+            summary: typeof metadata.summary === 'string' ? metadata.summary : undefined,
         };
     }, [activeResult]);
 
@@ -221,6 +283,19 @@ export default function InformationSummary() {
                             <p className="whitespace-pre-wrap text-sm leading-relaxed text-secondary-foreground">
                                 {activeResult.content}
                             </p>
+                            {weatherOverview && (
+                                <HolidayWeatherWidget
+                                    overview={weatherOverview.overview}
+                                    targetDate={weatherOverview.targetDate}
+                                    sunrise={weatherOverview.sunrise}
+                                    wind={weatherOverview.wind}
+                                    tide={weatherOverview.tide}
+                                    tidePhase={weatherOverview.tidePhase}
+                                    moonAge={weatherOverview.moonAge}
+                                    bestWindow={weatherOverview.bestWindow}
+                                    summary={weatherOverview.summary}
+                                />
+                            )}
                             {mapMetadata && (
                                 <MapRoutePreview metadata={mapMetadata} />
                             )}

@@ -322,9 +322,9 @@ export const messages: Record<TranslationKey, Record<LocaleCode, string>> = {
         ja: 'エージェント',
     },
     'transcription.userLabel': {
-        ko: '사용자',
-        en: 'User',
-        ja: 'ユーザー',
+        ko: '구룡포 낚시프라자',
+        en: 'Owner',
+        ja: '店長',
     },
     'transcription.callInitiateFailed': {
         ko: '통화 요청 실패',
@@ -352,7 +352,7 @@ export const messages: Record<TranslationKey, Record<LocaleCode, string>> = {
         ja: 'Twilioステータス',
     },
     'transcription.callStatus': {
-        ko: '통화 상태',
+        ko: '상태',
         en: 'Call',
         ja: '通話',
     },

@@ -3,13 +3,17 @@
 선박 안전 기상 정보 API 구현
 """
 
+import asyncio
+
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 from datetime import datetime, timedelta
-from typing import Optional, List
+from typing import Optional, List, Dict
 import httpx
 import os
 from urllib.parse import unquote
+import math
+import random
 
 from src.config import logger
 
@@ -50,6 +54,9 @@ def service_key_variants() -> list[str]:  # 순회용
     if RAW_SERVICE_KEY == DECODED_SERVICE_KEY:
         return [RAW_SERVICE_KEY]
     return [DECODED_SERVICE_KEY, RAW_SERVICE_KEY]
+
+
+SERVICE_KEY = get_service_key()
 
 
 def _maybe_dump_fishery_payload(data: dict, *, label: str) -> None:
@@ -112,6 +119,260 @@ class ShipSafeStatsResponse(BaseModel):
     status: str = Field(..., description="응답상태")
     data: WeatherHistoryData = Field(..., description="응답값 객체")
 
+
+class TideEvent(BaseModel):
+    time: str = Field(..., description="물때 시각 (HH:MM)")
+    height: float = Field(..., description="조위 (m)")
+
+
+class HolidayWeatherDay(BaseModel):
+    date: str = Field(..., description="날짜 (YYYY-MM-DD)")
+    label: str = Field(..., description="요약 라벨")
+    weekday: str = Field(..., description="요일 (국문 약어)")
+    condition: str = Field(..., description="날씨 상태 설명")
+    summary: str = Field(..., description="간단 요약")
+    temp_min: float = Field(..., description="최저 기온")
+    temp_max: float = Field(..., description="최고 기온")
+    wind_speed: float = Field(..., description="평균 풍속 (m/s)")
+    wind_direction: str = Field(..., description="풍향 설명")
+    wave_height: float = Field(..., description="평균 파고 (m)")
+    precipitation_chance: int = Field(..., description="강수 확률 (%)")
+    tide_phase: str = Field(..., description="물때 단계")
+    moon_age: float = Field(..., description="음력 일령")
+    sunrise: str = Field(..., description="일출 시각")
+    sunset: str = Field(..., description="일몰 시각")
+    best_window: str = Field(..., description="권장 출조 시간대")
+    caution_window: Optional[str] = Field(None, description="주의가 필요한 시간대")
+    high_tides: List[TideEvent] = Field(default_factory=list, description="만조 시각/조위")
+    low_tides: List[TideEvent] = Field(default_factory=list, description="간조 시각/조위")
+    comfort_score: float = Field(..., description="낚시 적합도 점수 (0-100)")
+
+
+class HolidayChartPoint(BaseModel):
+    date: str = Field(..., description="날짜 (YYYY-MM-DD)")
+    label: str = Field(..., description="차트 라벨")
+    wind_speed: float = Field(..., description="평균 풍속 (m/s)")
+    wave_height: float = Field(..., description="평균 파고 (m)")
+    temp_min: float = Field(..., description="최저 기온")
+    temp_max: float = Field(..., description="최고 기온")
+    precipitation_chance: int = Field(..., description="강수 확률 (%)")
+    comfort_score: float = Field(..., description="낚시 적합도 점수 (0-100)")
+
+
+class HolidayRecommendation(BaseModel):
+    date: str = Field(..., description="추천 날짜")
+    label: str = Field(..., description="추천 라벨")
+    reason: str = Field(..., description="추천 이유")
+    score: float = Field(..., description="적합도 점수 (0-100)")
+
+
+class HolidayWeatherResponse(BaseModel):
+    range_label: str = Field(..., description="조회 구간 라벨")
+    start_date: str = Field(..., description="기간 시작일")
+    end_date: str = Field(..., description="기간 종료일")
+    source: str = Field(..., description="데이터 출처")
+    days: List[HolidayWeatherDay] = Field(..., description="일자별 상세 정보")
+    best: HolidayRecommendation = Field(..., description="최적 날짜 추천")
+    chart: List[HolidayChartPoint] = Field(..., description="시각화용 차트 데이터")
+    advisories: List[str] = Field(default_factory=list, description="주의/참고 사항")
+
+
+_CHUSEOK_FORECAST_DATA: List[Dict[str, object]] = [
+    {
+        "date": "2025-10-05",
+        "label": "추석 연휴 첫째 날",
+        "weekday": "일",
+        "condition": "맑음",
+        "summary": "맑고 동남풍이 약해 오전 출조에 최적",
+        "temp_min": 18.0,
+        "temp_max": 26.0,
+        "wind_speed": 4.8,
+        "wind_direction": "동남 (ESE)",
+        "wave_height": 0.4,
+        "precipitation_chance": 10,
+        "tide_phase": "사리 직후 안정기",
+        "moon_age": 2.8,
+        "sunrise": "05:57",
+        "sunset": "18:03",
+        "best_window": "06:00~10:30",
+        "caution_window": "15:00 이후 동풍 강화",
+        "high_tides": [
+            {"time": "04:18", "height": 1.92},
+            {"time": "16:42", "height": 1.63},
+        ],
+        "low_tides": [
+            {"time": "10:22", "height": 0.21},
+            {"time": "22:48", "height": 0.31},
+        ],
+        "score": 87.5,
+        "recommendation_reason": "풍속 5m/s 이하, 파고 0.4m로 안정적이고 오전 썰물과 맞물려 입질이 활발할 가능성이 큽니다.",
+    },
+    {
+        "date": "2025-10-06",
+        "label": "추석 연휴 둘째 날",
+        "weekday": "월",
+        "condition": "구름 많음",
+        "summary": "남동풍이 가장 약하고 파고 0.3m로 가장 안정",
+        "temp_min": 17.0,
+        "temp_max": 25.0,
+        "wind_speed": 3.6,
+        "wind_direction": "남동 (SE)",
+        "wave_height": 0.3,
+        "precipitation_chance": 20,
+        "tide_phase": "조금",
+        "moon_age": 3.8,
+        "sunrise": "05:58",
+        "sunset": "18:01",
+        "best_window": "05:30~09:30",
+        "caution_window": "18:00 이후 북동풍 전환",
+        "high_tides": [
+            {"time": "05:10", "height": 1.88},
+            {"time": "17:35", "height": 1.52},
+        ],
+        "low_tides": [
+            {"time": "11:18", "height": 0.26},
+            {"time": "23:41", "height": 0.35},
+        ],
+        "score": 91.0,
+        "recommendation_reason": "풍속과 파고가 가장 안정적이고 물때가 '조금'으로 초보자도 편하게 낚시하기 좋습니다.",
+    },
+    {
+        "date": "2025-10-07",
+        "label": "추석 연휴 셋째 날",
+        "weekday": "화",
+        "condition": "구름 많고 한때 약한 비",
+        "summary": "북동풍이 강해지기 시작, 오전 위주 출조 권장",
+        "temp_min": 17.0,
+        "temp_max": 24.0,
+        "wind_speed": 6.2,
+        "wind_direction": "북동 (NE)",
+        "wave_height": 0.7,
+        "precipitation_chance": 40,
+        "tide_phase": "조금",
+        "moon_age": 4.8,
+        "sunrise": "05:59",
+        "sunset": "18:00",
+        "best_window": "06:30~09:00",
+        "caution_window": "13:00 이후 파고 상승",
+        "high_tides": [
+            {"time": "06:04", "height": 1.74},
+            {"time": "18:28", "height": 1.38},
+        ],
+        "low_tides": [
+            {"time": "00:36", "height": 0.43},
+            {"time": "12:14", "height": 0.39},
+        ],
+        "score": 70.0,
+        "recommendation_reason": "오전에는 여전히 출조 가능하지만 오후부터 북동풍과 파고가 상승합니다.",
+    },
+    {
+        "date": "2025-10-08",
+        "label": "추석 연휴 넷째 날",
+        "weekday": "수",
+        "condition": "흐리고 비",
+        "summary": "북동풍 강하고 파고 1m 이상, 대체 일정 권장",
+        "temp_min": 16.0,
+        "temp_max": 22.0,
+        "wind_speed": 8.1,
+        "wind_direction": "북동 (NE)",
+        "wave_height": 1.1,
+        "precipitation_chance": 70,
+        "tide_phase": "하현 전",
+        "moon_age": 5.8,
+        "sunrise": "06:00",
+        "sunset": "17:58",
+        "best_window": "대체 일정 고려",
+        "caution_window": "하루 종일 풍속 8m/s 이상",
+        "high_tides": [
+            {"time": "06:58", "height": 1.58},
+            {"time": "19:24", "height": 1.25},
+        ],
+        "low_tides": [
+            {"time": "01:28", "height": 0.52},
+            {"time": "13:46", "height": 0.61},
+        ],
+        "score": 52.0,
+        "recommendation_reason": "풍속과 파고가 모두 높아 안전을 위해 일정을 조정하는 것이 좋습니다.",
+    },
+]
+
+_CHUSEOK_FORECAST_ADVISORIES: List[str] = [
+    "10월 6일이 연휴 중 가장 안정적인 조건으로 추천드립니다.",
+    "7일 오후 이후부터 북동풍이 강해지므로 오전 위주 출조가 안전합니다.",
+    "8일은 풍속과 파고가 모두 높아 예비 일정을 고려해 주세요.",
+]
+
+
+def _build_chuseok_holiday_weather() -> HolidayWeatherResponse:
+    days: List[HolidayWeatherDay] = []
+    chart: List[HolidayChartPoint] = []
+    best_entry: Optional[Dict[str, object]] = None
+
+    for entry in _CHUSEOK_FORECAST_DATA:
+        day = HolidayWeatherDay(
+            date=entry["date"],
+            label=entry["label"],
+            weekday=entry["weekday"],
+            condition=entry["condition"],
+            summary=entry["summary"],
+            temp_min=float(entry["temp_min"]),
+            temp_max=float(entry["temp_max"]),
+            wind_speed=float(entry["wind_speed"]),
+            wind_direction=str(entry["wind_direction"]),
+            wave_height=float(entry["wave_height"]),
+            precipitation_chance=int(entry["precipitation_chance"]),
+            tide_phase=str(entry["tide_phase"]),
+            moon_age=float(entry["moon_age"]),
+            sunrise=str(entry["sunrise"]),
+            sunset=str(entry["sunset"]),
+            best_window=str(entry["best_window"]),
+            caution_window=str(entry["caution_window"]) if entry.get("caution_window") else None,
+            high_tides=[TideEvent(**event) for event in entry["high_tides"]],
+            low_tides=[TideEvent(**event) for event in entry["low_tides"]],
+            comfort_score=float(entry["score"]),
+        )
+        days.append(day)
+
+        chart.append(
+            HolidayChartPoint(
+                date=entry["date"],
+                label=entry["label"],
+                wind_speed=float(entry["wind_speed"]),
+                wave_height=float(entry["wave_height"]),
+                temp_min=float(entry["temp_min"]),
+                temp_max=float(entry["temp_max"]),
+                precipitation_chance=int(entry["precipitation_chance"]),
+                comfort_score=float(entry["score"]),
+            )
+        )
+
+        if best_entry is None or float(entry["score"]) > float(best_entry["score"]):
+            best_entry = entry
+
+    assert best_entry is not None  # for type checkers
+    best = HolidayRecommendation(
+        date=str(best_entry["date"]),
+        label=str(best_entry["label"]),
+        reason=str(best_entry["recommendation_reason"]),
+        score=float(best_entry["score"]),
+    )
+
+    return HolidayWeatherResponse(
+        range_label="추석 연휴 (10/5~10/8)",
+        start_date=_CHUSEOK_FORECAST_DATA[0]["date"],
+        end_date=_CHUSEOK_FORECAST_DATA[-1]["date"],
+        source="mock-holiday-forecast",
+        days=days,
+        best=best,
+        chart=chart,
+        advisories=_CHUSEOK_FORECAST_ADVISORIES,
+    )
+
+
+def get_chuseok_holiday_forecast() -> HolidayWeatherResponse:
+    """추석 연휴(10/5~10/8) 기상/물때 정보."""
+
+    return _build_chuseok_holiday_weather()
 
 # 어획량 관련 응답 모델들
 class CatchData(BaseModel):
@@ -221,6 +482,8 @@ class WeatherRegionResponse(BaseModel):
     search_term: Optional[str] = Field(None, description="검색어")
     region_type: Optional[str] = Field(None, description="구역 특성 필터")
 
+
+# 내부 헬퍼 함수들
 def fetch_catch_history_data(
     *,
     fish_type: Optional[str] = None,
@@ -289,6 +552,76 @@ def fetch_catch_history_data(
     logger.info("Falling back to mock catch history data after API failure")
     return _get_mock_catch_history_data(fish_type, start_date, end_date, ship_id)
 
+
+def fetch_ship_safe_stats_history_sync(
+    date: str,
+    *,
+    timeout: float = 30.0,
+) -> Optional[ShipSafeStatsResponse]:
+    """선박 안전 기상 정보 API를 동기 방식으로 호출."""
+    headers = {
+        "User-Agent": "Mozilla/5.0 (compatible; DeepCatch-Agent/1.0)",
+        "Accept": "application/json, */*",
+        "Accept-Encoding": "gzip, deflate",
+        "Accept-Language": "ko-KR,ko;q=0.9,en;q=0.8",
+        "Connection": "keep-alive",
+    }
+
+    url = f"{BASE_API_URL}{API_ENDPOINTS['ship_safe_stats_history']}"
+    last_error: Optional[str] = None
+
+    try:
+        with httpx.Client(
+            verify=False,
+            timeout=timeout,
+            headers=headers,
+            follow_redirects=True,
+        ) as client:
+            for attempt, key_variant in enumerate(service_key_variants(), start=1):
+                params = {"serviceKey": key_variant, "date": date}
+                try:
+                    response = client.get(url, params=params, timeout=timeout)
+                except httpx.RequestError as exc:
+                    last_error = f"request error on attempt {attempt}: {exc}"
+                    logger.warning(last_error)
+                    continue
+
+                logger.info(
+                    "Ship-safe API attempt %s with %s key returned status %s",
+                    attempt,
+                    "decoded"
+                    if key_variant == DECODED_SERVICE_KEY and RAW_SERVICE_KEY != DECODED_SERVICE_KEY
+                    else "raw",
+                    response.status_code,
+                )
+
+                if response.status_code != 200:
+                    last_error = f"status {response.status_code}: {response.text[:200]}"
+                    continue
+
+                try:
+                    data = response.json()
+                except ValueError as exc:
+                    last_error = f"json decode failed: {exc}"
+                    logger.warning(last_error)
+                    continue
+
+                top_data = (data.get("data") or {}).get("top") if isinstance(data, dict) else None
+                if isinstance(top_data, dict) and top_data:
+                    _maybe_dump_fishery_payload(data, label="ship_safe_success")
+                    return ShipSafeStatsResponse(**data)
+
+                last_error = "empty top data"
+                logger.warning("Ship-safe API attempt %s returned empty data", attempt)
+
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.exception("Unexpected error while fetching ship-safe stats: %s", exc)
+
+    if last_error:
+        logger.warning("Ship-safe stats API failed; reason: %s", last_error)
+    return None
+
+
 # API 엔드포인트들
 
 
@@ -296,134 +629,24 @@ def fetch_catch_history_data(
 async def get_ship_safe_stats_history(
     date: str = Query(..., description="요청날짜 (YYYYMMDD 형식)", example="20250102")
 ):
-    """
-    주요 기상 요소 과거 정보 조회
-    경상북도 포항시 구룡포읍_트윈으로 지키는 선박 안전 서비스
-    """
-    try:
-        # 서비스 키 검증
-        # 서비스 키 확보 (디코드/원본 순차 시도)
-        if not RAW_SERVICE_KEY:
-            logger.warning("DPG_SERVICE_KEY not set or empty, using mock data")
-            return _get_mock_weather_data(date)
-        logger.info(
-            "Using SERVICE_KEY decoded=%s raw_preview=%s",
-            DECODED_SERVICE_KEY != RAW_SERVICE_KEY,
-            f"{RAW_SERVICE_KEY[:10]}{'*' * max(0,len(RAW_SERVICE_KEY)-10)}" if RAW_SERVICE_KEY else "<empty>"
-        )
-        
-        # HTTPS 요청을 위한 추가 설정
-        headers = {
-            "User-Agent": "Mozilla/5.0 (compatible; DeepCatch-Agent/1.0)",
-            "Accept": "application/json, */*",
-            "Accept-Encoding": "gzip, deflate",
-            "Accept-Language": "ko-KR,ko;q=0.9,en;q=0.8",
-            "Connection": "keep-alive",
-        }
+    """주요 기상 요소 과거 정보 조회 (실패 시 모의 데이터 반환)."""
 
-        # 실제 환경에서는 외부 API 호출
-        async with httpx.AsyncClient(
-            verify=False,  # SSL 인증서 검증 비활성화
-            timeout=30.0,
-            headers=headers,
-            follow_redirects=True,  # 리다이렉트 자동 추적
-        ) as client:
-            last_error_text = None
-            key_variants = service_key_variants()
-            for idx, key_variant in enumerate(key_variants):
-                params = {"serviceKey": key_variant, "date": date}
-                url = f"{BASE_API_URL}{API_ENDPOINTS['ship_safe_stats_history']}"
-                logger.info(
-                    "Calling external API attempt=%s key_variant=%s url=%s date=%s",
-                    idx + 1,
-                    "decoded" if key_variant == DECODED_SERVICE_KEY and RAW_SERVICE_KEY != DECODED_SERVICE_KEY else "raw",
-                    url,
-                    date,
-                )
-                response = await client.get(url, params=params, timeout=30.0)
-                logger.info(f"API Response status: {response.status_code}")
-                preview = response.text[:300]
-                logger.info(f"API Response content: {preview}...")
-                if response.status_code == 200:
-                    try:
-                        data = response.json()
-                    except Exception:
-                        logger.warning("JSON parse failed, fallback to mock")
-                        break
-                    # 성공 형식 추정: {"id":"1","status":"success","data":{"top":{...}}}
-                    top_data = (data.get("data") or {}).get("top") if isinstance(data, dict) else None
-                    if top_data and isinstance(top_data, dict) and len(top_data) > 0:
-                        # 디버그 dump
-                        _maybe_dump_fishery_payload(data, label="ship_safe_success")
-            params = {"serviceKey": SERVICE_KEY, "date": date}
-
-            # URL 인코딩 문제 해결을 위해 수동으로 URL 구성
-            url = f"{BASE_API_URL}{API_ENDPOINTS['ship_safe_stats_history']}"
-
-            # 로그에 실제 호출 URL 전체 출력
-            logger.info(f"Calling external API: {url}")
-            logger.info(f"Service Key (first 15 chars): {SERVICE_KEY[:15]}...")
-            logger.info(f"Date parameter: {date}")
-
-            response = await client.get(url, params=params, timeout=30.0)
-
-            logger.info(f"API Response status: {response.status_code}")
-            logger.info(f"API Response content: {response.text[:500]}...")
-
-            if response.status_code == 200:
-                data = response.json()
-                logger.info(f"Successfully parsed JSON data: {data}")
-
-                # 실제 API 응답 형식에 맞게 데이터 변환
-                if "data" in data and "top" in data["data"]:
-                    # 실제 응답에 맞는 데이터가 있는지 확인
-                    top_data = data["data"]["top"]
-                    if top_data:  # top 데이터가 비어있지 않은 경우
-                        return ShipSafeStatsResponse(**data)
-                    else:
-                        logger.warning(
-                            "API returned empty top data (attempt=%s variant=%s). will %s",
-                            idx + 1,
-                            "decoded" if key_variant == DECODED_SERVICE_KEY and RAW_SERVICE_KEY != DECODED_SERVICE_KEY else "raw",
-                            "try alternate variant" if idx + 1 < len(key_variants) else "fallback to mock",
-                        )
-                        # 빈 top & 다음 variant 남아 있으면 계속, 아니면 mock
-                        if idx + 1 < len(key_variants):
-                            continue
-                        _maybe_dump_fishery_payload(data, label="ship_safe_empty_top")
-                        return _get_mock_weather_data(date)
-                    logger.warning(f"Unexpected API response format: {data}")
-                    _maybe_dump_fishery_payload(data, label="ship_safe_unexpected")
-                    return _get_mock_weather_data(date)
-                else:
-                    last_error_text = response.text
-                    # 401 & invalid key 메시지이면 다음 variant 시도
-                    if response.status_code == 401 and "유효하지 않은" in response.text and idx == 0 and len(service_key_variants()) > 1:
-                        logger.warning("First key variant rejected (401 invalid). Trying alternate encoding variant...")
-                        continue
-                    logger.error(
-                        "External API error final status=%s content=%s", response.status_code, preview
-                    )
-                    break
-            # 실패 → mock 사용
-            logger.info("Falling back to mock data due to API error (%s)", last_error_text)
-            return _get_mock_weather_data(date)
-                
-            else:
-                logger.error(
-                    f"External API error: {response.status_code}, content: {response.text}"
-                )
-                # 실제 API 실패 시 모의 데이터로 fallback
-                logger.info("Falling back to mock data due to API error")
-                return _get_mock_weather_data(date)
-    except httpx.RequestError as e:
-        logger.error(f"Request error: {e}")
-        # 개발/테스트용 모의 데이터 반환
+    if not RAW_SERVICE_KEY:
+        logger.warning("DPG_SERVICE_KEY not set; returning mock weather data")
         return _get_mock_weather_data(date)
-    except Exception as e:
-        logger.error(f"Unexpected error: {e}")
-        raise HTTPException(status_code=500, detail="서버 내부 오류")
 
+    response = await asyncio.to_thread(fetch_ship_safe_stats_history_sync, date)
+    if response is not None:
+        return response
+
+    return _get_mock_weather_data(date)
+
+
+@router.get("/ship-safe/holiday/forecast", response_model=HolidayWeatherResponse)
+async def get_holiday_weather_forecast():
+    """추석 연휴 기간(10/5~10/8) 기상 및 물때 정보."""
+
+    return get_chuseok_holiday_forecast()
 
 # 모의 데이터 생성 함수
 def _get_mock_weather_data(date: str) -> ShipSafeStatsResponse:
@@ -1078,8 +1301,6 @@ async def get_weather_forecast(
             
             logger.info(f"Calling KMA weather API: {WEATHER_URL}")
             logger.info(f"Parameters: {params}")
-            logger.info(f"Full URL with params: {response.url if 'response' in locals() else 'Not available yet'}")
-            
             response = await client.get(WEATHER_URL, params=params, timeout=30.0)
             
             logger.info(f"Weather API Response status: {response.status_code}")

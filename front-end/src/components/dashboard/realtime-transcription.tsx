@@ -142,23 +142,41 @@ export default function RealtimeTranscription() {
 
     // callStatus 감시하여 타이머 갱신
     useEffect(() => {
-        if (!callStatus) return;
-        const st = (callStatus.status || '').toLowerCase();
-        const activeStatuses = ['in-progress', 'answered'];
-        if (!callStartTime && activeStatuses.includes(st)) {
+        const normalizedStatus = (callStatus?.status || '')
+            .toString()
+            .trim()
+            .toLowerCase()
+            .replace(/_/g, '-');
+
+        const activeKeywords = ['in-progress', 'answered', 'queued', 'initiated', 'ringing', 'media-connected', 'stream-started'];
+        const finalKeywords = ['completed', 'busy', 'failed', 'no-answer', 'canceled', 'cancelled', 'ended', 'disconnected', 'error'];
+
+        const shouldRunTimer = isCallActive || (normalizedStatus.length > 0 && activeKeywords.some(keyword => normalizedStatus.includes(keyword)));
+        const shouldStopTimer = (!isCallActive && normalizedStatus.length > 0) || finalKeywords.some(keyword => normalizedStatus.includes(keyword));
+
+        if (shouldRunTimer && callStartTime === null) {
             const start = Date.now();
             setCallStartTime(start);
-            timerRef.current && clearInterval(timerRef.current);
+            setElapsed(0);
+            if (timerRef.current) {
+                clearInterval(timerRef.current);
+            }
             timerRef.current = setInterval(() => {
                 setElapsed(Math.floor((Date.now() - start) / 1000));
             }, 1000);
         }
-        const endStatuses = ['completed','busy','failed','no-answer','canceled'];
-        if (callStartTime && endStatuses.includes(st)) {
-            timerRef.current && clearInterval(timerRef.current);
-            timerRef.current = null;
+
+        if (callStartTime !== null && shouldStopTimer) {
+            if (timerRef.current) {
+                clearInterval(timerRef.current);
+                timerRef.current = null;
+            }
+            if (!shouldRunTimer) {
+                setCallStartTime(null);
+                setElapsed(0);
+            }
         }
-    }, [callStatus, callStartTime]);
+    }, [callStatus, isCallActive, callStartTime]);
 
     useEffect(() => () => { if (timerRef.current) clearInterval(timerRef.current); }, []);
 
@@ -169,11 +187,23 @@ export default function RealtimeTranscription() {
     };
 
     const callStatusLabel = useMemo(() => {
-        if (!callStatus?.status) {
-            return null;
+        if (callStatus?.message && callStatus.message.trim().length > 0) {
+            return callStatus.message;
         }
-        return localizeCallStatus(callStatus.status, t);
-    }, [callStatus, t]);
+        if (callStatus?.status) {
+            const localized = localizeCallStatus(callStatus.status, t);
+            if (localized) {
+                return localized;
+            }
+        }
+        if (isCallActive) {
+            return localizeCallStatus('in-progress', t);
+        }
+        if (isLoading || showWaitingState || hasAttempted) {
+            return localizeCallStatus('initiated', t);
+        }
+        return null;
+    }, [callStatus, t, isCallActive, isLoading, showWaitingState, hasAttempted]);
 
     const scenarioProgressLabel = useMemo(() => {
         if (!scenarioProgress) {
@@ -252,7 +282,7 @@ export default function RealtimeTranscription() {
                     </div>
                 </ScrollArea>
                 <div className="mt-3 flex flex-wrap gap-2 justify-end">
-                    {/* 시나리오 토글 */}
+                    {/* 시나리오 토글
                     <div className="flex gap-1 items-center border rounded px-2 py-1 bg-muted/40">
                         {SCENARIO_IDS.map(id => (
                             <button
@@ -303,7 +333,7 @@ export default function RealtimeTranscription() {
                         }}
                     >
                         {dialing ? t('transcription.dialingButton') : t('transcription.testCall')}
-                    </Button>
+                    </Button> */}
                 </div>
                 {callStatus && (
                     <div className="mt-2 text-[10px] text-muted-foreground">{t('transcription.twilioStatus')}: {callStatusLabel ?? localizeCallStatus(null, t)}</div>

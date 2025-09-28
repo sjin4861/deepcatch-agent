@@ -1,14 +1,10 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
-from typing import Optional
-import os
-try:
-    import httpx  # type: ignore
-except ImportError:  # pragma: no cover
-    httpx = None  # type: ignore
+from typing import Any, Dict, List, Optional
 
-from src.config import settings, logger
+from src.config import logger
+from src import fishery_api
 
 from ..base import BaseTool, ToolContext, ToolOutput
 from ...conversation_models import FishingPlanDetails, WeatherReport
@@ -38,44 +34,114 @@ class WeatherTool(BaseTool):
             datetime.combine(target_date, datetime.min.time()) + timedelta(hours=5, minutes=48)
         ).strftime("%H:%M")
 
-        if httpx is not None:
-            try:
-                # ship-safe mock/실제 API (내부 FastAPI) 호출
-                base_url = os.getenv("INTERNAL_API_BASE", "http://localhost:8000")
-                date_param = target_date.strftime("%Y%m%d")
-                with httpx.Client(timeout=5.0) as client:
-                    r = client.get(f"{base_url}/api/v1/ship-safe/stats/history", params={"date": date_param})
-                    if r.status_code == 200:
-                        data = r.json()
-                        top = data.get("data", {})
-                        # 기존 mock 구조 (beforeDay/nowDay)
-                        before = top.get("beforeDay") or {}
-                        now = top.get("nowDay") or {}
-                        temp = now.get("temp") or before.get("temp")
-                        winsp = now.get("winsp") or before.get("winsp")
-                        if winsp is not None:
-                            wind = f"평균 풍속 {winsp} m/s"
-                        if temp is not None:
-                            summary = f"기온 {temp}°, 평균 풍속 {winsp} m/s 기준 오전 출조 권장"
-                        tide = "(Mock) 물때 데이터 (추후 API 연동)"
-                        best_window = "05:30~09:30" if (isinstance(winsp, (int, float)) and winsp < 6) else "이른 오전 (~08:00)"
-                        logger.info("[Tool:weather] ship-safe fetch success temp=%s winsp=%s", temp, winsp)
-                    else:
-                        logger.warning(f"weather tool external api fallback status={r.status_code}")
-            except Exception as e:  # pragma: no cover
-                logger.debug(f"weather tool fetch failed: {e}")
-                if not summary:
-                    summary = "외부 기상 API 호출 실패로 기본 값을 사용합니다."
-        else:
-            logger.debug("httpx 미설치로 weather API 호출 스킵, static fallback 사용")
+        forecast = fishery_api.get_chuseok_holiday_forecast()
+        logger.info(
+            "[Tool:weather] holiday forecast loaded source=%s days=%s",
+            forecast.source,
+            len(forecast.days),
+        )
+
+        day_lookup = {day.date: day for day in forecast.days}
+        best_payload = forecast.best.dict()
+        best_day = day_lookup.get(forecast.best.date) if forecast.days else None
+        if best_day is None and forecast.days:
+            best_day = forecast.days[0]
+
+        def _format_events(events: list) -> str:
+            if not events:
+                return "--"
+            return ", ".join(f"{event.time} ({event.height:.2f}m)" for event in events)
+
+        holiday_days_payload: List[Dict[str, Any]] = []
+        for day in forecast.days:
+            holiday_days_payload.append(
+                {
+                    "date": day.date,
+                    "label": day.label,
+                    "weekday": day.weekday,
+                    "condition": day.condition,
+                    "summary": day.summary,
+                    "tempMin": round(day.temp_min, 1),
+                    "tempMax": round(day.temp_max, 1),
+                    "windSpeed": round(day.wind_speed, 1),
+                    "windDirection": day.wind_direction,
+                    "waveHeight": round(day.wave_height, 2),
+                    "precipitationChance": day.precipitation_chance,
+                    "tidePhase": day.tide_phase,
+                    "moonAge": round(day.moon_age, 1),
+                    "sunrise": day.sunrise,
+                    "sunset": day.sunset,
+                    "bestWindow": day.best_window,
+                    "cautionWindow": day.caution_window,
+                    "highTides": [
+                        {"time": ev.time, "height": ev.height}
+                        for ev in day.high_tides
+                    ],
+                    "lowTides": [
+                        {"time": ev.time, "height": ev.height}
+                        for ev in day.low_tides
+                    ],
+                    "comfortScore": round(day.comfort_score, 1),
+                }
+            )
+
+        holiday_chart_payload = [
+            {
+                "date": point.date,
+                "label": point.label,
+                "windSpeed": round(point.wind_speed, 1),
+                "waveHeight": round(point.wave_height, 2),
+                "tempMin": round(point.temp_min, 1),
+                "tempMax": round(point.temp_max, 1),
+                "precipitationChance": point.precipitation_chance,
+                "comfortScore": round(point.comfort_score, 1),
+            }
+            for point in forecast.chart
+        ]
+
+        best_window = best_day.best_window if best_day else best_window
+        tide_phase = best_day.tide_phase if best_day else None
+        moon_age = best_day.moon_age if best_day else None
+        sunrise_value = best_day.sunrise if best_day else sunrise
+        target_display = (
+            f"{best_day.date} ({best_day.weekday})" if best_day else display_date
+        )
+        wind = (
+            f"평균 풍속 {best_day.wind_speed:.1f} m/s ({best_day.wind_direction}), 파고 {best_day.wave_height:.1f} m"
+            if best_day
+            else wind
+        )
+        tide = (
+            f"{best_day.tide_phase} · 만조 {_format_events(best_day.high_tides)} / 간조 {_format_events(best_day.low_tides)}"
+            if best_day
+            else tide
+        )
+        summary = (
+            f"{forecast.best.label}: {forecast.best.reason}"
+            if forecast.best and forecast.best.reason
+            else summary
+        )
 
         report = WeatherReport(
-            target_date=display_date,
-            sunrise=sunrise,
+            target_date=target_display,
+            sunrise=sunrise_value,
             wind=wind,
             tide=tide,
             best_window=best_window,
             summary=summary,
+            tide_phase=tide_phase,
+            moon_age=moon_age,
+            holiday_range=forecast.range_label,
+            holiday_days=holiday_days_payload,
+            holiday_chart=holiday_chart_payload,
+            holiday_best={
+                "date": best_payload.get("date"),
+                "label": best_payload.get("label"),
+                "reason": best_payload.get("reason"),
+                "score": best_payload.get("score"),
+            },
+            holiday_advisories=forecast.advisories,
+            holiday_source=forecast.source,
         )
 
         # Planner 로 date 채워 넣기 (없으면)
@@ -86,7 +152,13 @@ class WeatherTool(BaseTool):
 
         output = ToolOutput(updates=updates)
         output.add_tool_result(report.as_tool_result())
-        logger.info("[Tool:weather] 실행 완료 target_date=%s wind='%s' tide='%s'", display_date, wind, tide)
+        logger.info(
+            "[Tool:weather] 실행 완료 target_date=%s wind='%s' tide='%s' summary='%s'",
+            display_date,
+            wind,
+            tide,
+            summary,
+        )
         return output
 
     @staticmethod
