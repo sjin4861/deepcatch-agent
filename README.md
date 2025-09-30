@@ -113,7 +113,7 @@ Socket.IO 브리지 ↔ OpenAI Realtime ↔ 실시간 전사/응답 스트리밍
 ### 공통
 
 ```bash
-git clone https://github.com/사용자명/deepcatch-agent.git
+git clone https://github.com/sjin4861/deepcatch-agent.git
 cd deepcatch-agent
 ```
 
