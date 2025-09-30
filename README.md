@@ -3,6 +3,9 @@
 
 **Deepcatch Agent**는 포항 구룡포 낚시 관광객을 위해 설계된 AI 기반 전화 예약 어시스턴트입니다. LangGraph로 구성된 에이전트가 기상/어획 데이터를 수집해 맞춤 플랜을 제안하고, Twilio 음성 통화를 통해 낚시점 예약까지 돕습니다. Next.js 대시보드에서는 대화 히스토리, 실시간 전사, 분석 인사이트를 한눈에 확인할 수 있습니다.
 
+<img width="1890" height="1063" alt="image" src="https://github.com/user-attachments/assets/cbbe2f77-a488-4010-bc3e-48fa2c086e46" />
+
+
 ---
 
 ## 📚 Table of Contents
@@ -65,9 +68,14 @@ deepcatch-agent/
 
 ## 주요 기능
 
+<img width="1887" height="1063" alt="image" src="https://github.com/user-attachments/assets/b1e68982-bd25-4999-b8b3-8b3b9b20df84" />
+<img width="1890" height="1066" alt="image" src="https://github.com/user-attachments/assets/58759e73-23d3-4c9d-a00b-0afe42bffa34" />
+<img width="1884" height="1066" alt="image" src="https://github.com/user-attachments/assets/b13553c8-b045-4c87-94a2-47a07a50cfea" />
+<img width="820" height="864" alt="image" src="https://github.com/user-attachments/assets/94fe57b7-d76c-4256-993e-c94c00060d17" />
+
 - **대화형 일정 수집**: LangGraph 플래너가 날짜, 인원, 예산 등 핵심 슬롯을 질의·보관
 - **기상/물때 인사이트**: 구룡포 추석 연휴(10/5~10/8) 맞춤 예보, 풍속/파고 차트, 추천 일정 제공
-- **어획 데이터 분석**: 최근 어획량 추세, 주요 어종 차트, 입항 선박 정보
+- **어획 데이터 분석**: 최근 어획량 추세, 주요 어종 차트, 입항 선박 정보 
 - **실시간 통화 스트리밍**: Socket.IO를 통한 Twilio/OpenAI 음성 이벤트 전파, 대시보드 전사 렌더링
 - **전화 예약 자동화**: Twilio API로 실제 전화 발신 및 결과 요약
 - **맵 경로 시각화**: Kakao 지도 기반 추천 낚시점 경로/위치 표시
