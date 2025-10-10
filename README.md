@@ -1,5 +1,6 @@
 # Deepcatch Agent
 - 🏆 2025 POSTECH Digital Twin Chatbot Hackathon — 1st Place (Grand Prize, 25.09.28.)
+[![Demo 영상 링크]](https://drive.google.com/file/d/1WsQgc6tGfwUXCp0YOaCd-5D7nYxs7eEq/view?usp=sharing)
 
 **Deepcatch Agent**는 포항 구룡포 낚시 관광객을 위해 설계된 AI 기반 전화 예약 어시스턴트입니다. LangGraph로 구성된 에이전트가 기상/어획 데이터를 수집해 맞춤 플랜을 제안하고, Twilio 음성 통화를 통해 낚시점 예약까지 돕습니다. Next.js 대시보드에서는 대화 히스토리, 실시간 전사, 분석 인사이트를 한눈에 확인할 수 있습니다.
 
